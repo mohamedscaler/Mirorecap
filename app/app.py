@@ -684,6 +684,7 @@ class App(rumps.App):
         self.dernier = None              # {"projet", "fichier", "titre"} du dernier compte rendu
         self.fenetre = None
         self.maj = None                  # numéro de la nouvelle version si disponible
+        self.derniere_erreur = ""        # message de la dernière erreur de traitement
         self.maj_en_cours = False
         self._compteur = 0
 
@@ -734,6 +735,7 @@ class App(rumps.App):
             "version": VERSION,
             "maj": self.maj,
             "maj_en_cours": self.maj_en_cours,
+            "derniere_erreur": self.derniere_erreur,
         }
 
     # --- Mises à jour ---------------------------------------------------------
@@ -876,6 +878,12 @@ class App(rumps.App):
                 self.dernier = {"projet": analyse["projet"], "fichier": md.name, "titre": analyse["titre"]}
                 notifier(f"Classé dans {analyse['projet']}", analyse["titre"])
             except Exception as e:
+                # Erreur complète dans app.log + gardée pour l'afficher dans les Réglages
+                import traceback
+                print(f"[{dt.datetime.now():%Y-%m-%d %H:%M:%S}] Erreur sur {chemin.name} :", flush=True)
+                traceback.print_exc()
+                sys.stdout.flush()
+                self.derniere_erreur = f"{dt.datetime.now():%d/%m %H:%M} · {e}"
                 # Rien n'est perdu : l'audio (et la transcription si dispo) part dans _Erreurs
                 destination = chemin_libre(DOSSIER_ERREURS / chemin.name)
                 if chemin.exists():

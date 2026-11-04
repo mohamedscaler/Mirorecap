@@ -416,7 +416,7 @@
         <p class="titre-groupe">Erreurs</p>
         <div class="groupe">
           <div class="rang">
-            <div class="corps" id="erreurs-etat"></div>
+            <div class="corps"><div id="erreurs-etat"></div><div id="erreur-detail" class="d selectionnable" style="white-space:normal"></div></div>
             <button class="bouton" type="button" data-ouvrir="erreurs">Afficher</button>
             <button id="relancer" class="bouton principal" type="button">Relancer</button>
           </div>
@@ -615,6 +615,7 @@
       ? `Mise à jour vers la version ${e.maj}… MiroRecap va se relancer tout seul.`
       : `MiroRecap ${e.maj} est disponible.`;
     $("#maj-bouton").hidden = e.maj_en_cours;
+    $("#erreur-detail").textContent = e.derniere_erreur ? "Dernière erreur : " + e.derniere_erreur : "";
     $("#version-etat").innerHTML = e.maj
       ? `<div>Version ${esc(e.version)}</div><div class="d">La version ${esc(e.maj)} est disponible</div>`
       : `<div>Version ${esc(e.version)}</div><div class="d">À jour · vérification toutes les 6 heures</div>`;
