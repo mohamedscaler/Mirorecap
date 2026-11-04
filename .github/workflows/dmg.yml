@@ -1,0 +1,38 @@
+# Construit MiroRecap.dmg sur un Mac Apple Silicon de GitHub et l'attache à la release.
+# Déclenchement : publier une release (ou pousser un tag v*) sur GitHub.
+name: Construire le DMG
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version = numéro du tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "${GITHUB_REF_NAME#v}" > app/VERSION
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Construire l'app et le DMG
+        run: bash build/construire.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MiroRecap-dmg
+          path: dist/MiroRecap.dmg
+
+      - name: Publier dans la release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/MiroRecap.dmg
+          name: MiroRecap ${{ github.ref_name }}

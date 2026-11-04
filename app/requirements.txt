@@ -1,7 +1,15 @@
+# Modules embarqués dans MiroRecap.app
+# (mlx-whisper est installé à part, sans ses dépendances : torch n'est pas utile pour transcrire)
 rumps
 sounddevice
 soundfile
 numpy
-mlx-whisper
 anthropic
 pywebview
+mlx
+numba
+scipy
+tqdm
+more-itertools
+tiktoken
+huggingface_hub

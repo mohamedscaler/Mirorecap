@@ -46,7 +46,7 @@ DOSSIER_APP = Path.home() / "Library" / "Application Support" / "MiroRecap"
 
 # Mises à jour : on compare app/VERSION local avec celui de la branche main sur GitHub
 DEPOT = "mohamedscaler/Mirorecap"
-URL_VERSION = f"https://raw.githubusercontent.com/{DEPOT}/main/app/VERSION"
+URL_VERSION = f"https://api.github.com/repos/{DEPOT}/releases/latest"
 URL_INSTALL = f"https://raw.githubusercontent.com/{DEPOT}/main/install-distant.sh"
 _fichier_version = DOSSIER_CODE / "VERSION"
 VERSION = _fichier_version.read_text().strip() if _fichier_version.exists() else "0"
@@ -188,8 +188,13 @@ def version_tuple(v):
 def derniere_version():
     """Version publiée sur GitHub, ou None si pas de réseau."""
     try:
-        with urllib.request.urlopen(URL_VERSION, timeout=10) as r:
-            return r.read().decode().strip()
+        requete = urllib.request.Request(URL_VERSION, headers={"Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(requete, timeout=10) as r:
+            release = json.loads(r.read().decode())
+        # On ne propose la release que si son DMG est déjà construit
+        if not any(a.get("name") == "MiroRecap.dmg" for a in release.get("assets", [])):
+            return None
+        return release.get("tag_name", "").lstrip("v") or None
     except Exception:
         return None
 
@@ -254,10 +259,22 @@ class Enregistreur:
 def transcrire(chemin_audio):
     """Retourne la transcription horodatée : '[mm:ss] texte' par ligne.
     Au premier usage d'un modèle, ses fichiers sont téléchargés (~/.cache/huggingface)."""
+    import tempfile
     import mlx_whisper  # import tardif : lourd à charger
 
+    # afconvert est fourni avec macOS : il lit m4a, mp3, wav, caf, mp4… sans ffmpeg
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = Path(tmp) / "audio.wav"
+        r = subprocess.run(
+            ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(chemin_audio), str(wav)],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"format audio illisible ({r.stderr.strip() or chemin_audio.suffix})")
+        audio, _ = sf.read(str(wav), dtype="float32")
+
     resultat = mlx_whisper.transcribe(
-        str(chemin_audio),
+        audio,
         path_or_hf_repo=CONFIG["modele_whisper"],
         language=CONFIG["langue"],
     )
@@ -783,7 +800,7 @@ class App(rumps.App):
         # Si l'installation échoue, on relance au moins l'app existante.
         subprocess.Popen(
             ["/bin/bash", "-c",
-             f'curl -fsSL "{URL_INSTALL}" | bash || open -a "$HOME/Applications/MiroRecap.app"'],
+             f'curl -fsSL "{URL_INSTALL}" | bash || open -a MiroRecap'],
             stdin=subprocess.DEVNULL, stdout=journal, stderr=subprocess.STDOUT,
             start_new_session=True,
         )
@@ -897,7 +914,40 @@ class App(rumps.App):
                 self.statut = ""
 
 
+def preparer_installation():
+    """Lancement au démarrage du Mac + nettoyage des anciennes versions installées par script."""
+    bundle = DOSSIER_CODE.parent.parent.parent          # …/MiroRecap.app
+    if bundle.suffix != ".app":
+        return
+    agent = Path.home() / "Library" / "LaunchAgents" / "fr.mirorecap.app.plist"
+    try:
+        agent.parent.mkdir(parents=True, exist_ok=True)
+        agent.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>fr.mirorecap.app</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/bin/open</string><string>-a</string><string>{bundle}</string></array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+""")
+    except Exception:
+        pass
+    # Anciennes versions (installateur en Terminal) : app dans ~/Applications et Python à part.
+    # La config (clé API, réglages) est conservée.
+    ancienne = Path.home() / "Applications" / "MiroRecap.app"
+    if ancienne.exists() and ancienne.resolve() != bundle.resolve():
+        shutil.rmtree(ancienne, ignore_errors=True)
+    for nom in (".venv", "ui"):
+        shutil.rmtree(DOSSIER_APP / nom, ignore_errors=True)
+    for nom in ("app.py", "fenetre.py", "requirements.txt", "VERSION", "icone.png"):
+        (DOSSIER_APP / nom).unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
+    preparer_installation()
     # Pas d'icône dans le Dock pour ce processus : il vit dans la barre de menus
     try:
         from AppKit import NSApplication
