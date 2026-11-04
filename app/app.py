@@ -987,7 +987,14 @@ SCHEMA_ANALYSE_CHAMPS = {
     "mail_destinataire": "à qui envoyer le mail (nom, rôle), vide si aucun mail",
     "mail_objet": "objet du mail, vide si aucun mail",
     "mail_corps": "texte du mail prêt à envoyer avec la signature, vide si aucun mail",
+    "nouveau_projet": "nom court du client ou du sujet si aucun projet existant ne correspond (sinon vide)",
+    "nouveau_projet_description": "une phrase décrivant ce nouveau projet (sinon vide)",
+    "statut": "où en est la relation client après cet appel",
+    "interlocuteurs": "une ligne par personne côté client : Nom · rôle · coordonnées (sinon vide)",
+    "budget": "budget ou montant discuté (sinon vide)",
+    "besoin": "le besoin du client en une phrase (sinon vide)",
 }
+STATUTS = ["prospect", "devis", "en_cours", "termine", "perdu"]
 
 
 def instructions_analyse(noms, projets):
@@ -1018,6 +1025,16 @@ Rédige le compte rendu en markdown, en français, sans titre principal, avec ce
 
 N'invente rien : si une info est incertaine ou mal transcrite, signale-le.
 
+Nouveau client : si l'appel concerne clairement un client, une entreprise ou un sujet récurrent qui n'a pas encore
+de projet, mets le projet "{PROJET_PAR_DEFAUT}" et propose son nom dans « nouveau_projet » (nom de l'entreprise ou du
+client, court, sans « projet » devant) avec une phrase de description. Sinon laisse ces deux champs vides.
+
+Fiche client (pour le projet choisi ou proposé) :
+- « statut » : prospect (premier contact, découverte), devis (un devis ou une proposition est attendu ou envoyé),
+  en_cours (accord donné, travail lancé), termine (livré, clos), perdu (refus, abandon) ; vide si l'appel ne le dit pas ;
+- « interlocuteurs » : les personnes côté client (nom, rôle, téléphone ou mail s'ils sont dits) ;
+- « budget » et « besoin » : seulement s'ils sont évoqués.
+
 Mail à préparer : si l'appel appelle un mail de ma part (envoyer un devis, un récapitulatif, des documents promis, confirmer un rendez-vous, relancer, remercier après une première prise de contact…), rédige-le, prêt à envoyer :
 - adressé à la bonne personne, avec ce qui a été dit et convenu (dates, montants, prochaines étapes), en tenant compte de l'historique du projet ;
 - dans mon ton (tutoiement ou vouvoiement selon notre relation dans l'appel), clair et court ;
@@ -1046,6 +1063,7 @@ def schema_json(noms):
         "required": list(SCHEMA_ANALYSE_CHAMPS),
         "properties": {
             cle: ({"type": "string", "enum": noms, "description": desc} if cle == "projet"
+                  else {"type": "string", "enum": [""] + STATUTS, "description": desc} if cle == "statut"
                   else {"type": "string", "description": desc})
             for cle, desc in SCHEMA_ANALYSE_CHAMPS.items()
         },
@@ -1802,7 +1820,7 @@ def section_markdown(texte, titre):
 SYNTHESES = {}   # état des synthèses en cours, par projet
 
 
-def lancer_synthese(nom):
+def lancer_synthese(nom, silencieux=False):
     """« Où on en est » : Claude relit tous les comptes rendus du projet et fait le point."""
     dossier = dossier_projet(nom)
     if SYNTHESES.get(nom) == "en_cours":
@@ -1835,7 +1853,8 @@ Quand deux appels se contredisent, garde le plus récent et signale le changemen
             (dossier / "_synthese.md").write_text(
                 f"<!-- {dt.datetime.now():%Y-%m-%dT%H:%M} · {len(fichiers)} comptes rendus -->\n{synthese}\n", encoding="utf-8")
             SYNTHESES[nom] = "ok"
-            notifier(f"Point d'étape prêt : {nom}", "La synthèse du projet est à jour.")
+            if not silencieux:
+                notifier(f"Point d'étape prêt : {nom}", "La synthèse du projet est à jour.")
         except Exception as e:
             print(f"Synthèse {nom} : {e}", flush=True)
             SYNTHESES[nom] = f"echec : {e}"
@@ -1862,13 +1881,183 @@ def lire_projet(nom):
         date_synthese = m.group(1) if m else ""
         synthese = brut[m.end():] if m else brut
     desc = "Ce qui ne correspond à aucun projet." if nom == PROJET_PAR_DEFAUT else lister_projets().get(nom, "")
+    fiche = lire_fiche(nom) if nom != PROJET_PAR_DEFAUT else None
+    if fiche:
+        actions = sorted(fiche["actions"], key=lambda a: (a["fait"], a.get("date", "")), reverse=False)
+        actions = [a for a in actions if not a["fait"]][::-1] + [a for a in actions if a["fait"]][::-1]
+        fiche["jours_sans_contact"] = jours_sans_contact(fiche)
     return {
+        "fiche": fiche,
         "nom": nom, "description": desc, "modifiable": nom != PROJET_PAR_DEFAUT,
         "comptes_rendus": cr, "actions": actions[:40],
         "synthese": synthese, "date_synthese": date_synthese,
         "synthese_etat": SYNTHESES.get(nom, ""),
         "synthese_perimee": bool(synthese) and bool(cr) and cr[0]["date"] > date_synthese,
     }
+
+
+# ---------------------------------------------------------------------------
+# Fiche client d'un projet (_fiche.json) : statut, interlocuteurs, actions à cocher…
+# ---------------------------------------------------------------------------
+
+def _id_action(texte):
+    import hashlib
+    return hashlib.sha1(re.sub(r"\W+", " ", texte.lower()).strip().encode()).hexdigest()[:10]
+
+
+def actions_depuis_compte_rendu(md):
+    texte = md.read_text(encoding="utf-8")
+    m = MOTIF_DATE.match(md.name)
+    date = dt.datetime(*map(int, m.groups())).isoformat(timespec="minutes") if m else ""
+    titre = texte.split("\n", 1)[0].lstrip("# ").strip()
+    return [{"id": _id_action(a), "texte": a, "fait": False, "fichier": md.name, "titre": titre, "date": date}
+            for a in extraire_actions(texte)]
+
+
+def lire_fiche(nom):
+    """Fiche du projet ; créée à la volée (depuis les comptes rendus existants) si elle n'existe pas."""
+    dossier = dossier_projet(nom)
+    fichier = dossier / "_fiche.json"
+    if fichier.exists():
+        try:
+            return json.loads(fichier.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    fiche = {"statut": "", "interlocuteurs": [], "budget": "", "besoin": "", "dernier_contact": "", "actions": [],
+             "relance_notifiee": ""}
+    for md in sorted((f for f in dossier.glob("*.md") if not f.name.startswith("_")), key=lambda f: f.name):
+        for a in actions_depuis_compte_rendu(md):
+            if a["id"] not in {x["id"] for x in fiche["actions"]}:
+                fiche["actions"].append(a)
+        m = MOTIF_DATE.match(md.name)
+        if m:
+            fiche["dernier_contact"] = max(fiche["dernier_contact"], dt.datetime(*map(int, m.groups())).isoformat(timespec="minutes"))
+    return fiche
+
+
+def ecrire_fiche(nom, fiche):
+    (dossier_projet(nom) / "_fiche.json").write_text(json.dumps(fiche, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def mettre_a_jour_fiche(nom, analyse, date, md):
+    """Après un appel : statut, interlocuteurs, budget, besoin, dernier contact et nouvelles actions."""
+    if nom == PROJET_PAR_DEFAUT:
+        return
+    fiche = lire_fiche(nom)
+    if analyse.get("statut") in STATUTS:
+        fiche["statut"] = analyse["statut"]
+    for ligne in str(analyse.get("interlocuteurs") or "").splitlines():
+        ligne = ligne.strip(" -•\t")
+        cle = ligne.split("·")[0].strip().lower()
+        if ligne and cle not in {x.split("·")[0].strip().lower() for x in fiche["interlocuteurs"]}:
+            fiche["interlocuteurs"].append(ligne)
+    for champ in ("budget", "besoin"):
+        if str(analyse.get(champ) or "").strip():
+            fiche[champ] = analyse[champ].strip()
+    fiche["dernier_contact"] = max(fiche.get("dernier_contact") or "", date.isoformat(timespec="minutes"))
+    connues = {a["id"] for a in fiche["actions"]}
+    fiche["actions"] += [a for a in actions_depuis_compte_rendu(md) if a["id"] not in connues]
+    fiche["relance_notifiee"] = ""
+    ecrire_fiche(nom, fiche)
+
+
+def modifier_fiche(nom, donnees):
+    if nom == PROJET_PAR_DEFAUT:
+        raise ValueError("Divers n'a pas de fiche")
+    fiche = lire_fiche(nom)
+    if donnees.get("statut") in STATUTS + [""]:
+        fiche["statut"] = donnees["statut"]
+    if donnees.get("action"):
+        for a in fiche["actions"]:
+            if a["id"] == donnees["action"]:
+                a["fait"] = bool(donnees.get("fait"))
+    ecrire_fiche(nom, fiche)
+    return lire_projet(nom)
+
+
+def jours_sans_contact(fiche):
+    try:
+        return (dt.datetime.now() - dt.datetime.fromisoformat(fiche["dernier_contact"])).days
+    except Exception:
+        return None
+
+
+def verifier_relances():
+    """Projets actifs sans nouvelles depuis 10 jours : une notification par semaine au plus."""
+    for nom in lister_projets():
+        try:
+            fiche = lire_fiche(nom)
+            jours = jours_sans_contact(fiche)
+            if fiche.get("statut") not in ("prospect", "devis", "en_cours") or jours is None or jours < 10:
+                continue
+            deja = fiche.get("relance_notifiee") or ""
+            if deja and (dt.datetime.now() - dt.datetime.fromisoformat(deja)).days < 7:
+                continue
+            notifier(f"Pas de nouvelles de {nom}", f"Dernier échange il y a {jours} jours. Une relance ?")
+            fiche["relance_notifiee"] = dt.datetime.now().isoformat(timespec="minutes")
+            ecrire_fiche(nom, fiche)
+        except Exception as e:
+            print(f"Relance {nom} : {e}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Propositions de nouveaux projets (client détecté dans un appel rangé dans Divers)
+# ---------------------------------------------------------------------------
+
+FICHIER_PROPOSITIONS = DOSSIER_APP / "propositions.json"
+
+
+def lire_propositions():
+    try:
+        return json.loads(FICHIER_PROPOSITIONS.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def ajouter_proposition(analyse, fichier):
+    nom = re.sub(r"[/\\:]", " ", str(analyse.get("nouveau_projet") or "")).strip()[:60]
+    if not nom or nom.lower() in {p.lower() for p in lister_projets()} or nom == PROJET_PAR_DEFAUT:
+        return None
+    propositions = lire_propositions()
+    for p in propositions:
+        if p["nom"].lower() == nom.lower():   # même client : on regroupe les appels
+            p["fichiers"].append(fichier)
+            break
+    else:
+        propositions.append({"nom": nom, "description": str(analyse.get("nouveau_projet_description") or "").strip(),
+                             "fichiers": [fichier],
+                             "fiche": {k: analyse.get(k, "") for k in ("statut", "interlocuteurs", "budget", "besoin")}})
+    FICHIER_PROPOSITIONS.parent.mkdir(parents=True, exist_ok=True)
+    FICHIER_PROPOSITIONS.write_text(json.dumps(propositions, ensure_ascii=False, indent=1), encoding="utf-8")
+    return nom
+
+
+def traiter_proposition(nom, action):
+    propositions = lire_propositions()
+    prop = next((p for p in propositions if p["nom"] == nom), None)
+    if not prop:
+        raise ValueError("proposition introuvable")
+    restantes = [p for p in propositions if p is not prop]
+    FICHIER_PROPOSITIONS.write_text(json.dumps(restantes, ensure_ascii=False, indent=1), encoding="utf-8")
+    if action != "creer":
+        return {"ok": True}
+    if nom not in lister_projets():
+        creer_projet(nom, prop.get("description", ""))
+    deplaces = []
+    for fichier in prop["fichiers"]:
+        try:
+            deplaces.append(deplacer_compte_rendu(PROJET_PAR_DEFAUT, fichier, nom)["fichier"])
+        except Exception as e:
+            print(f"Proposition {nom} : {fichier} non déplacé ({e})", flush=True)
+    # Fiche initiale à partir de ce que l'appel a appris
+    for f in deplaces:
+        md = dossier_projet(nom) / f
+        m = MOTIF_DATE.match(f)
+        date = dt.datetime(*map(int, m.groups())) if m else dt.datetime.now()
+        mettre_a_jour_fiche(nom, prop.get("fiche", {}), date, md)
+    if deplaces:
+        lancer_synthese(nom, silencieux=True)
+    return {"ok": True, "projet": nom, "deplaces": len(deplaces)}
 
 
 def deplacer_compte_rendu(projet, fichier, vers):
@@ -1895,7 +2084,10 @@ def deplacer_compte_rendu(projet, fichier, vers):
 def liste_projets_detaillee():
     resultat = []
     for nom, desc in lister_projets().items():
-        resultat.append({"nom": nom, "description": desc, "nb": compter_cr(DOSSIER_SORTIE / nom), "modifiable": True})
+        fiche = lire_fiche(nom)
+        resultat.append({"nom": nom, "description": desc, "nb": compter_cr(DOSSIER_SORTIE / nom), "modifiable": True,
+                         "statut": fiche.get("statut", ""), "jours_sans_contact": jours_sans_contact(fiche),
+                         "actions_ouvertes": sum(1 for a in fiche["actions"] if not a["fait"])})
     resultat.append({
         "nom": PROJET_PAR_DEFAUT,
         "description": "Ce qui ne correspond à aucun projet.",
@@ -2092,6 +2284,10 @@ class Api(http.server.BaseHTTPRequestHandler):
                 return self._json(200, tester_micro())
             if self.path == "/api/test-son":
                 return self._json(200, tester_son_systeme())
+            if self.path == "/api/fiche":
+                return self._json(200, modifier_fiche(d.get("nom", ""), d))
+            if self.path == "/api/propositions":
+                return self._json(200, traiter_proposition(d.get("nom", ""), d.get("action", "")))
             if self.path == "/api/ameliorer":
                 return self._json(200, self.app.demander_amelioration(d.get("projet", ""), d.get("fichier", ""), d.get("mode", "")))
             if self.path == "/api/mail":
@@ -2304,6 +2500,8 @@ class App(rumps.App):
             "accueil": not CONFIG.get("accueil_fait"),
             "traitement": dict(TRAITEMENT) if TRAITEMENT["etape"] else None,
             "derniere_amelioration": self.derniere_amelioration,
+            "propositions": [{"nom": p["nom"], "description": p.get("description", ""), "nb": len(p["fichiers"])}
+                             for p in lire_propositions()],
             "appel_detecte": (self.detecteur.appel if getattr(self, "detecteur", None) and not self.enreg.actif else None),
             "son_systeme": SON_SYSTEME,
         }
@@ -2329,6 +2527,7 @@ class App(rumps.App):
                 nettoyer_audios()
             except Exception as e:
                 print(f"Conservation des audios : {e}", flush=True)
+            verifier_relances()
             time.sleep(6 * 3600)
 
     def occupee(self):
@@ -2710,7 +2909,17 @@ class App(rumps.App):
                 analyse = analyser(transcription, date)
                 md = ranger(chemin, date, transcription, analyse)
                 self.dernier = {"projet": analyse["projet"], "fichier": md.name, "titre": analyse["titre"]}
-                notifier(f"Classé dans {analyse['projet']}", analyse["titre"])
+                nouveau = ajouter_proposition(analyse, md.name) if analyse["projet"] == PROJET_PAR_DEFAUT else None
+                if nouveau:
+                    notifier(f"Nouveau client : {nouveau}", "Ouvre MiroRecap pour créer son projet en un clic.")
+                else:
+                    notifier(f"Classé dans {analyse['projet']}", analyse["titre"])
+                try:
+                    mettre_a_jour_fiche(analyse["projet"], analyse, date, md)
+                    if analyse["projet"] != PROJET_PAR_DEFAUT:
+                        lancer_synthese(analyse["projet"], silencieux=True)   # point d'étape toujours à jour
+                except Exception as e:
+                    print(f"Fiche {analyse['projet']} : {e}", flush=True)
             except Exception as e:
                 # Erreur complète dans app.log + gardée pour l'afficher dans les Réglages
                 import traceback

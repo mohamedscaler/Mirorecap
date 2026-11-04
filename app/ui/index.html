@@ -612,6 +612,24 @@
   /* Résultats des tests d'enregistrement : message complet, sans coupure */
   #rg-micro-etat, #rg-son-etat, #ac-micro-etat, #ac-son-etat { white-space: normal; overflow: visible; text-overflow: clip; }
 
+  /* Projets : nouveau client, statut, fiche, actions à cocher */
+  .bandeau.proposition .texte { display: flex; flex-direction: column; }
+  .bandeau.proposition .d { color: var(--second); font-size: 12px; }
+  .pastille-nouveau { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: color-mix(in srgb, var(--bleu) 14%, transparent); color: var(--bleu); }
+  .statut-badge { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; margin-left: 6px; vertical-align: 1px; }
+  .s-prospect { --c: #8E8E93; } .s-devis { --c: #FF9F0A; } .s-en_cours { --c: #0A84FF; } .s-termine { --c: #30D158; } .s-perdu { --c: #FF453A; }
+  .statut-badge { color: var(--c); background: color-mix(in srgb, var(--c) 15%, transparent); }
+  .fiche { margin-top: 18px; background: var(--carte); border-radius: 16px; padding: 14px 16px 16px; box-shadow: inset 0 0 0 1px var(--separateur); }
+  .fiche-statut { display: inline-flex; gap: 4px; padding: 3px; border-radius: 999px; background: var(--capsule); }
+  .fiche-statut button { padding: 4px 12px; border-radius: 999px; font-weight: 500; font-size: 12px; color: var(--second); }
+  .fiche-statut button[aria-checked="true"] { background: var(--c); color: #fff; }
+  .fiche-grille { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; margin-top: 14px; }
+  .fiche-grille .etiq { display: block; font-size: 11px; font-weight: 600; color: var(--tertiaire); margin-bottom: 3px; }
+  .alerte-relance { color: var(--orange); font-weight: 500; }
+  .action-ligne { cursor: default; }
+  .action-ligne .case { width: 17px; height: 17px; accent-color: var(--bleu); flex-shrink: 0; }
+  .action-ligne.faite .corps > div:first-child { text-decoration: line-through; color: var(--second); }
+
 </style>
 </head>
 <body>
@@ -685,6 +703,7 @@
       <div class="progression"><span id="whisper-barre"></span></div>
     </div>
   </div>
+  <div id="propositions"></div>
   <div id="bandeau-appel" class="bandeau appel" hidden>
     <span class="pastille-rec" aria-hidden="true"></span>
     <span id="appel-texte" class="texte">Appel détecté</span>
@@ -733,7 +752,7 @@
           <h1>Projets</h1>
           <button id="nouveau-projet" class="bouton principal"><svg width="12" height="12"><use href="#i-plus"/></svg>Nouveau projet</button>
         </div>
-        <p class="intro">Claude range chaque compte rendu dans le projet qui correspond, grâce à son nom et à sa description.</p>
+        <p class="intro">Chaque appel est rangé dans le bon projet. Quand un nouveau client apparaît, MiroRecap te propose de créer son projet, puis tient sa fiche à jour : statut, interlocuteurs, actions et point d'étape.</p>
         <div id="liste-projets" class="groupe"></div>
         <p class="note">Chaque projet est un dossier dans Comptes-rendus. Ce qui ne correspond à aucun projet va dans Divers.</p>
       </div>
@@ -1249,6 +1268,20 @@
       }
     }
 
+    // Nouveaux clients détectés : proposer de créer leur projet
+    const props = e.propositions || [];
+    const cleProps = JSON.stringify(props);
+    if (cleProps !== window.propsAffichees) {
+      window.propsAffichees = cleProps;
+      $("#propositions").innerHTML = props.map((p) => `
+        <div class="bandeau proposition">
+          <span class="pastille-nouveau" aria-hidden="true">${icone("i-dossier", 14)}</span>
+          <span class="texte"><b>Nouveau client : ${esc(p.nom)}</b><span class="d">${esc(p.description || "")}${p.nb > 1 ? ` · ${p.nb} appels` : ""}</span></span>
+          <button class="bouton" data-prop="ignorer" data-nom="${esc(p.nom)}">Ignorer</button>
+          <button class="bouton principal" data-prop="creer" data-nom="${esc(p.nom)}">Créer le projet</button>
+        </div>`).join("");
+    }
+
     // Appel en cours détecté (micro utilisé par une autre app)
     const ap = e.appel_detecte;
     $("#bandeau-appel").hidden = !ap;
@@ -1540,12 +1573,15 @@
     $("#liste-projets").innerHTML = projets.map((p, i) => `
       <a class="rang cliquable" href="#projet/${encodeURIComponent(p.nom)}" style="color:inherit;text-decoration:none">
         <span class="icone-dossier">${icone("i-dossier", 18)}</span>
-        <div class="corps"><div>${esc(p.nom)}</div><div class="d">${esc(p.description || "Sans description")}</div></div>
+        <div class="corps"><div>${esc(p.nom)} ${p.statut ? `<span class="statut-badge s-${p.statut}">${STATUTS[p.statut]}</span>` : ""}</div>
+          <div class="d">${esc(p.description || "Sans description")}${p.jours_sans_contact != null ? ` · ${depuis(p.jours_sans_contact)}` : ""}${p.actions_ouvertes ? ` · ${p.actions_ouvertes} action${p.actions_ouvertes > 1 ? "s" : ""}` : ""}</div></div>
         <span class="second">${p.nb}</span>
         <span class="chevron">${icone("i-chevron", 12)}</span>
       </a>`).join("");
   }
 
+  const STATUTS = { prospect: "Prospect", devis: "Devis", en_cours: "En cours", termine: "Terminé", perdu: "Perdu" };
+  const depuis = (j) => j <= 0 ? "contact aujourd'hui" : j === 1 ? "contact hier" : `contact il y a ${j} j`;
   let projetEdite = null;
   function ouvrirFeuille(p) {
     projetEdite = p;
@@ -1571,14 +1607,27 @@
     $("#page-projet").innerHTML = `
       <a class="retour" href="#projets">${icone("i-chevron", 11)}Projets</a>
       <div class="projet-tete">
-        <div><h1>${esc(p.nom)}</h1><p class="intro" style="margin:4px 0 0">${esc(p.description || "Sans description")} · ${pluriel(p.comptes_rendus.length, "compte rendu").replace("comptes rendu", "comptes rendus")}</p></div>
+        <div><h1>${esc(p.nom)}</h1><p class="intro" style="margin:4px 0 0">${esc(p.description || "Sans description")} · ${p.comptes_rendus.length} ${p.comptes_rendus.length > 1 ? "comptes rendus" : "compte rendu"}</p></div>
         <div class="actions">
           ${p.modifiable ? '<button class="bouton" id="modifier-projet">Modifier</button>' : ""}
           <button class="bouton principal" id="faire-synthese" ${enCours || !p.comptes_rendus.length ? "disabled" : ""}>${enCours ? '<span class="chargement"></span> Claude fait le point…' : (p.synthese ? "Mettre à jour le point" : "Où on en est ?")}</button>
         </div>
       </div>
 
-      <p class="titre-groupe">Où on en est</p>
+      ${p.fiche ? `
+      <div class="fiche">
+        <div class="fiche-statut" role="radiogroup" aria-label="Statut du projet">
+          ${Object.entries(STATUTS).map(([k, v]) => `<button role="radio" class="s-${k}" data-statut="${k}" aria-checked="${p.fiche.statut === k}">${v}</button>`).join("")}
+        </div>
+        <div class="fiche-grille">
+          <div><span class="etiq">Interlocuteurs</span>${p.fiche.interlocuteurs.length ? p.fiche.interlocuteurs.map((x) => `<div class="selectionnable">${esc(x)}</div>`).join("") : '<div class="second">Pas encore connus</div>'}</div>
+          <div><span class="etiq">Besoin</span><div class="selectionnable">${esc(p.fiche.besoin || "—")}</div></div>
+          <div><span class="etiq">Budget</span><div class="selectionnable">${esc(p.fiche.budget || "—")}</div></div>
+          <div><span class="etiq">Dernier contact</span><div class="${p.fiche.jours_sans_contact >= 10 && ["prospect", "devis", "en_cours"].includes(p.fiche.statut) ? "alerte-relance" : ""}">${p.fiche.jours_sans_contact != null ? depuis(p.fiche.jours_sans_contact).replace("contact ", "") : "—"}${p.fiche.jours_sans_contact >= 10 && ["prospect", "devis", "en_cours"].includes(p.fiche.statut) ? " · une relance ?" : ""}</div></div>
+        </div>
+      </div>` : ""}
+
+      <p class="titre-groupe">Où on en est <span class="second" style="font-weight:400">· mis à jour après chaque appel</span></p>
       ${p.synthese
         ? `<div class="groupe synthese selectionnable"><div class="md">${markdown(p.synthese)}</div></div>
            <div class="synthese-pied"><span>Point fait le ${esc(dateSynth)}${p.synthese_perimee ? " · de nouveaux appels sont arrivés depuis" : ""}</span><button class="lien" id="copier-synthese">Copier pour Claude</button></div>`
@@ -1586,7 +1635,9 @@
 
       <p class="titre-groupe">Actions à faire</p>
       <div class="groupe">${p.actions.length ? p.actions.map((a) => `
-        <div class="rang action-ligne"><div class="corps"><div>${esc(a.texte)}</div><div class="d">${esc(a.titre)} · ${esc(new Date(a.date).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }))}</div></div></div>`).join("")
+        <label class="rang action-ligne${a.fait ? " faite" : ""}">
+          ${a.id ? `<input type="checkbox" class="case" data-action="${a.id}" ${a.fait ? "checked" : ""}>` : ""}
+          <div class="corps"><div>${esc(a.texte)}</div><div class="d">${esc(a.titre || "")} · ${esc(new Date(a.date).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }))}</div></div></label>`).join("")
         : '<div class="rang"><div class="corps second">Aucune action relevée pour l\'instant.</div></div>'}</div>
 
       <p class="titre-groupe">Comptes rendus</p>
@@ -1597,6 +1648,14 @@
         </div>`).join("") : '<div class="rang"><div class="corps second">Aucun compte rendu dans ce projet.</div></div>'}</div>`;
 
     $("#modifier-projet")?.addEventListener("click", () => ouvrirFeuille(p));
+    document.querySelectorAll("[data-statut]").forEach((b) => b.addEventListener("click", async () => {
+      try { await api("/api/fiche", { nom: p.nom, statut: b.dataset.statut }); chargerPageProjet(p.nom); }
+      catch (err) { message(err.message); }
+    }));
+    document.querySelectorAll("[data-action]").forEach((c) => c.addEventListener("change", async () => {
+      try { await api("/api/fiche", { nom: p.nom, action: c.dataset.action, fait: c.checked }); chargerPageProjet(p.nom); }
+      catch (err) { message(err.message); }
+    }));
     $("#faire-synthese").addEventListener("click", async () => {
       try { await api("/api/projets/synthese", { nom: p.nom }); chargerPageProjet(p.nom); }
       catch (err) { message(err.message); }
@@ -1863,6 +1922,18 @@
       message(`${pluriel(r.relances, "fichier")} remis en traitement.`);
       chargerReglages();
     } catch (err) { message(err.message); }
+  });
+
+  $("#propositions").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("[data-prop]");
+    if (!b) return;
+    b.disabled = true;
+    try {
+      const r = await api("/api/propositions", { nom: b.dataset.nom, action: b.dataset.prop });
+      message(b.dataset.prop === "creer" ? `Projet « ${r.projet} » créé, ${r.deplaces > 1 ? r.deplaces + " appels rangés" : "l'appel est rangé"} dedans.` : "Proposition ignorée.");
+      window.propsAffichees = null; chargerRaccourcis(); sonder();
+      if (!$("#vue-comptes-rendus").hidden) chargerComptesRendus();
+    } catch (err) { message(err.message); b.disabled = false; }
   });
 
   $("#appel-enregistrer").addEventListener("click", async () => {
