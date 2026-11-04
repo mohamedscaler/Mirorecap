@@ -844,7 +844,7 @@
   });
   $("#cc-connecter").addEventListener("click", async () => {
     await api("/api/claude-code", { action: "connecter" });
-    message("Le Terminal s'ouvre : si on te le demande, choisis « Claude account ». Tape /exit une fois connecté.");
+    message("Le Terminal s'ouvre : tape /login, choisis « Claude account », puis /exit une fois connecté.");
   });
   // Après une installation dans le Terminal, on rafraîchit l'état quand on revient sur la fenêtre
   window.addEventListener("focus", () => { if (!$("#vue-reglages").hidden) chargerReglages(); });
