@@ -318,6 +318,7 @@
   #fm-choix .rang:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--bleu); }
   #fm-choix .badge { font-size: 10px; font-weight: 600; color: #fff; background: var(--bleu); border-radius: 6px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px; }
 
+
   /* Message flottant */
   .message {
     position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 12px);
@@ -419,6 +420,195 @@
   .action-ligne .corps div:first-child { white-space: normal; }
   .chargement { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: tourne .8s linear infinite; vertical-align: -2px; }
   @keyframes tourne { to { transform: rotate(360deg); } }
+
+  /* =====================================================================
+     macOS 26 : contenu plein cadre, barre latérale en verre flottante,
+     barres d'outils en capsules, cartes contextuelles. (couche finale)
+     ===================================================================== */
+  :root {
+    --contenu: #FFFFFF;
+    --barre-verre: rgba(242, 242, 246, .82);
+    --barre-bord: rgba(0, 0, 0, .06);
+    --texte: #1D1D1F;
+    --second: #6E6E73;
+    --tertiaire: #AEAEB2;
+    --separateur: rgba(0, 0, 0, .08);
+    --survol: rgba(0, 0, 0, .045);
+    --capsule: rgba(0, 0, 0, .05);
+    --capsule-bord: rgba(0, 0, 0, .06);
+    --selection-douce: rgba(0, 122, 255, .12);
+    --carte: #F6F6F8;
+    --ombre-flottante: 0 1px 2px rgba(0, 0, 0, .05), 0 8px 24px rgba(0, 0, 0, .06);
+    --haut: 14px;   /* devient plus grand dans la fenêtre de l'app (feux tricolores) */
+    --police-titre: -apple-system, "SF Pro Display", BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --contenu: #1C1C1E;
+      --barre-verre: rgba(44, 44, 48, .78);
+      --barre-bord: rgba(255, 255, 255, .07);
+      --texte: #F5F5F7;
+      --second: #98989D;
+      --tertiaire: #636366;
+      --separateur: rgba(255, 255, 255, .08);
+      --survol: rgba(255, 255, 255, .06);
+      --capsule: rgba(255, 255, 255, .08);
+      --capsule-bord: rgba(255, 255, 255, .07);
+      --selection-douce: rgba(10, 132, 255, .22);
+      --carte: #242426;
+      --ombre-flottante: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .3);
+    }
+  }
+  body.fenetre-mac { --haut: 40px; }
+
+  /* Fenêtre : contenu plein cadre, barre latérale flottante */
+  html, body { background: var(--contenu); }
+  body { padding: 0; gap: 0; grid-template-columns: 248px 1fr; font-size: 13px; letter-spacing: -0.003em; }
+  .barre {
+    margin: 8px 0 8px 8px; padding: calc(var(--haut) - 6px) 8px 8px;
+    background: var(--barre-verre);
+    -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%);
+    border-radius: 18px; border: 0;
+    box-shadow: inset 0 0 0 1px var(--barre-bord), var(--ombre-flottante);
+  }
+  main { background: transparent; border-radius: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+  /* Barre latérale : icônes teintées sans pastille, sélection en capsule */
+  .elt { padding: 5px 8px; min-height: 30px; border-radius: 9px; gap: 9px; font-size: 13px; }
+  .elt:hover { background: var(--survol); }
+  .elt[aria-current="page"] { background: var(--capsule); box-shadow: none; font-weight: 500; }
+  .pastille { width: 20px; height: 20px; background: none !important; }
+  .pastille.bleu { color: var(--bleu); }
+  .pastille.orange { color: var(--orange); }
+  .pastille.gris { color: var(--second); }
+  .pastille svg { width: 16px; height: 16px; }
+  .icone-dossier { width: 20px; }
+  .titre-section { font-size: 11px; font-weight: 600; color: var(--tertiaire); padding: 16px 8px 4px; letter-spacing: .01em; }
+
+  /* Enregistreur : capsule compacte en bas de la barre latérale */
+  .enregistreur {
+    flex-direction: row; align-items: center; gap: 12px;
+    padding: 10px 12px; margin-top: 8px; border-radius: 14px;
+    background: var(--contenu); box-shadow: inset 0 0 0 1px var(--barre-bord);
+  }
+  .enr-texte { flex: 1; min-width: 0; }
+  .enr-ligne { display: flex; align-items: center; gap: 8px; }
+  .chrono { font-size: 20px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.15; }
+  .enregistreur .statut { text-align: left; min-height: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rec { margin: 0; width: 40px; height: 40px; border-width: 2px; border-color: color-mix(in srgb, var(--rouge) 30%, transparent); background: none; flex-shrink: 0; }
+  .rec-centre { width: 30px; height: 30px; box-shadow: 0 2px 8px color-mix(in srgb, var(--rouge) 40%, transparent); }
+  .rec[aria-pressed="true"] .rec-centre { width: 14px; height: 14px; border-radius: 4px; }
+  .onde { height: 14px; }
+  @keyframes onde { 50% { height: 14px; } }
+  .enregistre .chrono { color: var(--rouge); }
+
+  /* Boutons : capsules sobres */
+  .bouton {
+    border-radius: 999px; padding: 4px 12px; min-height: 28px; gap: 6px;
+    background: var(--capsule); box-shadow: inset 0 0 0 1px var(--capsule-bord); font-weight: 500;
+  }
+  .bouton:hover { filter: none; background: color-mix(in srgb, var(--capsule) 100%, var(--texte) 6%); }
+  .bouton.principal { background: var(--bleu); color: #fff; box-shadow: 0 1px 2px rgba(0, 122, 255, .35); }
+  .bouton.principal:hover { background: color-mix(in srgb, var(--bleu) 88%, black); }
+  .bouton.icone-seule { padding: 0; width: 28px; justify-content: center; }
+  .bouton svg { opacity: .9; }
+
+  /* Champs */
+  .champ, select, textarea { background: var(--capsule); box-shadow: inset 0 0 0 1px var(--capsule-bord); border-radius: 9px; }
+  .recherche .champ { border-radius: 999px; min-height: 30px; }
+
+  /* Liste des comptes rendus */
+  .colonne-liste { width: 300px; background: transparent; border-right: 1px solid var(--separateur); }
+  .entete-liste { padding: var(--haut) 16px 10px; gap: 10px; }
+  .entete-liste .ligne h1 { font: 700 22px/1.2 var(--police-titre); letter-spacing: -0.02em; }
+  .liste { padding: 0 10px 12px; }
+  .groupe-date { padding: 14px 8px 6px; color: var(--tertiaire); font-size: 11px; letter-spacing: .01em; }
+  .rangee { padding: 9px 12px; border-radius: 11px; gap: 2px; }
+  .rangee:hover { background: var(--survol); }
+  .liste li + li .rangee, .liste li + li .rangee[aria-current="true"] { box-shadow: none; }
+  .rangee .t { font-weight: 600; font-size: 13px; }
+  .rangee[aria-current="true"], .rangee[aria-current="true"]:hover { background: var(--bleu); box-shadow: none; }
+  .en-cours { margin: 0 10px 6px; border-radius: 11px; background: var(--capsule); }
+
+  /* Lecteur : barre d'outils en haut à droite, titre large, cartes */
+  .lecteur { padding: 0 44px 64px; position: relative; }
+  .outils-lecteur {
+    position: sticky; top: 0; z-index: 3;
+    display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+    padding: calc(var(--haut) - 6px) 0 10px; margin: 0 -8px 6px;
+    background: linear-gradient(var(--contenu) 70%, transparent);
+  }
+  .lecteur-tete { max-width: 700px; margin: 6px auto 20px; }
+  .lecteur-tete h1 { font: 700 28px/1.18 var(--police-titre); letter-spacing: -0.025em; }
+  .lecteur-tete .meta { margin-top: 8px; gap: 8px; font-size: 13px; }
+  .etiquette-projet { border-radius: 999px; background: var(--capsule); box-shadow: inset 0 0 0 1px var(--capsule-bord); padding: 2px 10px; }
+  .md { max-width: 700px; font-size: 14px; line-height: 1.62; }
+  .md h2 { font: 600 15px/1.3 var(--police-titre); margin: 26px 0 8px; letter-spacing: -0.01em; }
+  .md .meta-cr { display: none; }   /* date, projet, audio : déjà affichés en tête */
+  .md ul, .md ol { padding-left: 20px; }
+  .md li::marker { color: var(--tertiaire); }
+  .carte {
+    background: var(--carte); border-radius: 16px; padding: 4px 18px 14px; margin: 22px 0;
+    box-shadow: inset 0 0 0 1px var(--separateur);
+  }
+  .carte > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0 2px; }
+  .carte > header h2 { margin: 0; display: flex; align-items: center; gap: 8px; }
+  .carte > header h2 svg { color: var(--bleu); }
+  .carte .outils { display: flex; gap: 6px; }
+  .carte-mail p { white-space: pre-wrap; }
+  .carte p:last-child, .carte ul:last-child, .carte ol:last-child { margin-bottom: 0; }
+  .repliable { margin-top: 28px; border-top: 1px solid var(--separateur); padding-top: 14px; }
+  .repliable > summary { font: 600 15px/1.3 var(--police-titre); cursor: default; list-style: none; display: flex; align-items: center; gap: 8px; }
+  .repliable > summary::-webkit-details-marker { display: none; }
+  .repliable > summary::before { content: "›"; display: inline-block; width: 12px; color: var(--second); transition: transform .15s; font-size: 17px; }
+  .repliable[open] > summary::before { transform: rotate(90deg); }
+  .md .transcription { background: var(--carte); box-shadow: none; border-radius: 14px; margin-top: 12px; }
+
+  /* Menu « Plus » */
+  .menu-plus { position: relative; }
+  .menu {
+    position: absolute; right: 0; top: calc(100% + 6px); min-width: 230px; z-index: 10;
+    padding: 5px; border-radius: 12px;
+    background: var(--barre-verre); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%);
+    box-shadow: inset 0 0 0 1px var(--barre-bord), 0 12px 40px rgba(0, 0, 0, .18);
+  }
+  .menu button { display: block; width: 100%; text-align: left; padding: 6px 10px; border-radius: 7px; }
+  .menu button:hover { background: var(--bleu); color: #fff; }
+  .menu .danger { color: var(--rouge); }
+  .menu .danger.confirmer, .menu .danger:hover { background: var(--rouge); color: #fff; }
+  .menu hr { border: 0; height: 1px; background: var(--separateur); margin: 5px 8px; }
+
+  /* Vues à groupes (projets, réglages) */
+  .defilement { background: transparent; }
+  .contenu { max-width: 660px; padding: var(--haut) 28px 64px; }
+  .contenu > h1, .tete-vue h1 { font: 700 26px/1.2 var(--police-titre); letter-spacing: -0.025em; }
+  .titre-groupe { font-size: 13px; font-weight: 600; color: var(--texte); padding: 0 6px 8px; margin-top: 28px; }
+  .groupe { background: var(--carte); border-radius: 14px; box-shadow: inset 0 0 0 1px var(--separateur); }
+  .rang { min-height: 46px; padding: 10px 16px; }
+  .rang + .rang::before { left: 16px; right: 16px; }
+  .note { color: var(--second); font-size: 12px; padding: 8px 6px 0; line-height: 1.45; }
+  .bandeau { margin: calc(var(--haut) - 4px) 18px 0; border-radius: 14px; background: var(--carte); box-shadow: inset 0 0 0 1px var(--separateur); }
+  .barre-haut { top: calc(var(--haut) - 10px); }
+
+  /* Dialogues */
+  dialog { background: var(--contenu); border-radius: 20px; box-shadow: inset 0 0 0 1px var(--separateur), 0 30px 80px rgba(0, 0, 0, .28); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  dialog h2 { font: 700 19px/1.25 var(--police-titre); letter-spacing: -0.015em; }
+  .message { border-radius: 999px; padding: 8px 16px; background: var(--barre-verre); -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px); box-shadow: inset 0 0 0 1px var(--barre-bord), 0 10px 30px rgba(0, 0, 0, .15); }
+
+  /* Onglets des Réglages : capsule segmentée */
+  .segments {
+    display: inline-flex; gap: 2px; padding: 3px; margin: 14px 0 4px;
+    border-radius: 999px; background: var(--capsule); box-shadow: inset 0 0 0 1px var(--capsule-bord);
+  }
+  .segments button { padding: 5px 14px; border-radius: 999px; font-weight: 500; color: var(--second); }
+  .segments button:hover { color: var(--texte); }
+  .segments button[aria-selected="true"] { background: var(--contenu); color: var(--texte); box-shadow: 0 1px 3px rgba(0, 0, 0, .12), inset 0 0 0 1px var(--capsule-bord); }
+  .segments + .titre-groupe, .segments ~ [data-dans-onglet]:not([hidden]) ~ .titre-groupe { margin-top: 22px; }
+  /* Mail : destinataire et objet */
+  .mail-entete { display: flex; gap: 10px; margin-bottom: 2px !important; font-size: 13px; color: var(--texte); }
+  .mail-entete span { width: 48px; color: var(--second); flex-shrink: 0; }
+  .mail-entete + p:not(.mail-entete) { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--separateur); }
+
 </style>
 </head>
 <body>
@@ -434,6 +624,11 @@
   <symbol id="i-coche" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m3 8.5 3.2 3L13 4.5"/></symbol>
   <symbol id="i-alerte" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm-.8 3h1.6l-.2 5H7.4zm.8 6.2a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></symbol>
   <symbol id="i-fleche" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm-.8 3.5h1.6v4.1l1.6-1.6 1.1 1.1L8 12 4.5 8.6l1.1-1.1 1.6 1.6z"/></symbol>
+  <symbol id="i-plus-rond" viewBox="0 0 16 16"><circle cx="3.2" cy="8" r="1.5" fill="currentColor"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="12.8" cy="8" r="1.5" fill="currentColor"/></symbol>
+  <symbol id="i-etincelle" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.2l1.3 3.7 3.7 1.3-3.7 1.3L8 11.2 6.7 7.5 3 6.2l3.7-1.3zM12.6 10.4l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z"/></symbol>
+  <symbol id="i-copier" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" d="M5.5 5.5V3.2c0-.7.5-1.2 1.2-1.2h6.1c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2h-2.3M3.2 5.5h6.1c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3.2c-.7 0-1.2-.5-1.2-1.2V6.7c0-.7.5-1.2 1.2-1.2z"/></symbol>
+  <symbol id="i-enveloppe" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" d="M2.5 3.8h11c.6 0 1 .4 1 1v6.4c0 .6-.4 1-1 1h-11c-.6 0-1-.4-1-1V4.8c0-.6.4-1 1-1zM2 4.5l6 4.3 6-4.3"/></symbol>
+  <symbol id="i-rappel" viewBox="0 0 16 16"><circle cx="3.6" cy="4.4" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="3.6" cy="11.6" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M7.5 4.4h6.5M7.5 11.6h6.5"/></symbol>
   <symbol id="i-micro" viewBox="0 0 16 16"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5"/></symbol>
 </svg>
 
@@ -459,11 +654,13 @@
   </div>
 
   <section id="enregistreur" class="enregistreur" aria-label="Enregistrement">
-    <div class="onde" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
-    <p id="chrono" class="chrono">00:00</p>
-    <p id="statut" class="statut" aria-live="polite">Prêt à enregistrer</p>
     <button id="rec" class="rec" aria-pressed="false" aria-label="Enregistrer"><span class="rec-centre"></span></button>
-    <span id="rec-texte" class="rec-libelle">Enregistrer</span>
+    <div class="enr-texte">
+      <div class="enr-ligne"><p id="chrono" class="chrono">00:00</p>
+        <div class="onde" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div></div>
+      <p id="statut" class="statut" aria-live="polite">Prêt à enregistrer</p>
+      <span id="rec-texte" class="rec-libelle" hidden>Enregistrer</span>
+    </div>
   </section>
 </aside>
 
@@ -493,7 +690,7 @@
   <div id="alerte" class="bandeau" hidden>
     <svg class="icone" width="18" height="18"><use href="#i-alerte"/></svg>
     <span class="texte">Connecte ton abonnement Claude (ou une clé API) pour que tes enregistrements soient analysés.</span>
-    <a class="bouton principal" href="#reglages" style="text-decoration:none">Configurer</a>
+    <a class="bouton principal" href="#reglages" style="text-decoration:none" onclick="window.afficherOngletReglages && afficherOngletReglages('analyse')">Configurer</a>
   </div>
 
   <!-- Comptes rendus -->
@@ -552,6 +749,12 @@
     <div class="defilement">
       <div class="contenu">
         <h1>Réglages</h1>
+        <div class="segments" role="tablist" aria-label="Catégories de réglages">
+          <button role="tab" data-onglet="analyse" aria-selected="true">Analyse</button>
+          <button role="tab" data-onglet="enregistrement" aria-selected="false">Enregistrement</button>
+          <button role="tab" data-onglet="fichiers" aria-selected="false">Fichiers</button>
+          <button role="tab" data-onglet="app" aria-selected="false">Mises à jour</button>
+        </div>
 
         <p class="titre-groupe">Analyse par l'IA</p>
         <div class="groupe">
@@ -872,8 +1075,9 @@
     const lignes = texte.split("\n");
     if (lignes[0].startsWith("# ")) lignes.shift();
 
-    let html = "", liste = null, dansTranscription = false, debut = true;
+    let html = "", liste = null, dansTranscription = false, debut = true, carte = false;
     const fermer = () => { if (liste) { html += `</${liste}>`; liste = null; } };
+    const fermerCarte = () => { fermer(); if (carte) { html += "</section>"; carte = false; } };
     let masque = false;
     for (const brute of lignes) {
       const l = brute.trimEnd();
@@ -882,12 +1086,25 @@
       if (/^##\s+Contexte pour Claude/.test(l)) { fermer(); masque = true; continue; }
       if (masque) { if (/^##\s|^---\s*$/.test(l)) masque = false; else continue; }
       if (!l.trim()) { fermer(); continue; }
-      if (l.trim() === "---") { fermer(); debut = false; continue; }
+      if (l.trim() === "---") { fermerCarte(); debut = false; continue; }
       if ((m = l.match(/^#{2,6}\s+(.*)/))) {
-        fermer(); debut = false;
-        if (dansTranscription) { html += "</div>"; dansTranscription = false; }
-        html += `<h2>${inline(m[1])}</h2>`;
-        if (/transcription/i.test(m[1])) { html += '<div class="transcription">'; dansTranscription = true; }
+        fermerCarte(); debut = false;
+        if (dansTranscription) { html += "</div></details>"; dansTranscription = false; }
+        const titre = m[1];
+        if (/^Mail à envoyer/i.test(titre)) {
+          html += `<section class="carte carte-mail"><header><h2>${icone("i-enveloppe", 14)}${inline(titre)}</h2>
+            <span class="outils"><button class="bouton" id="ouvrir-mail">Ouvrir dans Mail</button><button class="bouton icone-seule" id="copier-mail" title="Copier le mail" aria-label="Copier le mail">${icone("i-copier", 13)}</button></span></header>`;
+          carte = true;
+        } else if (/^Actions à faire/i.test(titre)) {
+          html += `<section class="carte carte-actions"><header><h2>${icone("i-rappel", 14)}${inline(titre)}</h2>
+            <span class="outils"><button class="bouton" id="vers-rappels">Ajouter à Rappels</button></span></header>`;
+          carte = true;
+        } else if (/transcription/i.test(titre)) {
+          html += `<details class="repliable"><summary>${inline(titre)}</summary><div class="transcription">`;
+          dansTranscription = true;
+        } else {
+          html += `<h2>${inline(titre)}</h2>`;
+        }
         continue;
       }
       if ((m = l.match(/^\s*[-*]\s+(.*)/))) {
@@ -904,10 +1121,14 @@
       if ((m = l.match(/^\[(\d{2}:\d{2})\]\s*(.*)/))) {
         html += `<p class="ligne"><span class="temps">${m[1]}</span><span>${inline(m[2])}</span></p>`; continue;
       }
+      if (/^\(.*\)$/.test(l.trim()) && carte) continue;   // aide « (qui / quoi / deadline) »
+      if (carte && (m = l.match(/^\*\*(À|Objet)\*\* : (.*)$/))) {
+        html += `<p class="mail-entete"><span>${m[1]}</span>${inline(m[2])}</p>`; continue;
+      }
       html += `<p>${inline(l)}</p>`;
     }
-    fermer();
-    if (dansTranscription) html += "</div>";
+    fermerCarte();
+    if (dansTranscription) html += "</div></details>";
     return html;
   }
 
@@ -1183,6 +1404,17 @@
     dernierCoche = cleCR(c);
     rendreListe();
   });
+  // Menu « Plus » du lecteur : fermeture au clic ailleurs ou avec Échap
+  const fermerMenuPlus = () => {
+    const m = $("#menu-plus");
+    if (m && !m.hidden) { m.hidden = true; $("#plus").setAttribute("aria-expanded", "false"); }
+  };
+  document.addEventListener("click", fermerMenuPlus);
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") fermerMenuPlus(); });
+  // Dans la fenêtre de l'app (barre de titre intégrée) : on laisse la place aux feux tricolores
+  const marquerFenetre = () => document.body.classList.add("fenetre-mac");
+  if (window.pywebview) marquerFenetre(); else window.addEventListener("pywebviewready", marquerFenetre);
+
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape" && modeSelection && !document.querySelector("dialog[open]")) basculerModeSelection(false);
   });
@@ -1194,6 +1426,20 @@
     const params = new URLSearchParams({ projet: c.projet, fichier: c.fichier });
     const { markdown: texte, audio: aAudio } = await api("/api/compte-rendu?" + params);
     $("#lecteur").innerHTML = `
+      <div class="outils-lecteur">
+        <button class="bouton principal" id="copier-claude" title="Copie un résumé dense à coller dans Claude">${icone("i-copier", 13)}Copier pour Claude</button>
+        <button class="bouton" id="ameliorer" title="Corriger les mots mal reconnus">${icone("i-etincelle", 13)}Améliorer</button>
+        <div class="menu-plus">
+          <button class="bouton icone-seule" id="plus" aria-haspopup="true" aria-expanded="false" aria-label="Plus d'actions">${icone("i-plus-rond", 15)}</button>
+          <div class="menu" id="menu-plus" role="menu" hidden>
+            <button role="menuitem" id="copier">Copier le compte rendu</button>
+            <button role="menuitem" id="finder">Afficher dans le Finder</button>
+            <hr>
+            ${aAudio ? '<button role="menuitem" class="danger" id="suppr-audio">Supprimer l\'audio</button>' : ""}
+            <button role="menuitem" class="danger" id="suppr-cr">Supprimer le compte rendu</button>
+          </div>
+        </div>
+      </div>
       <header class="lecteur-tete">
         <h1>${esc(c.titre)}</h1>
         <p class="meta">
@@ -1202,20 +1448,17 @@
           </label>
           <span>${esc(dateLongue(c.date))}</span>
         </p>
-        <div class="actions">
-          <button class="bouton principal" id="copier-claude">Copier pour Claude</button>
-          ${/\n## Mail à envoyer\n/.test(texte) ? '<button class="bouton" id="ouvrir-mail">Ouvrir dans Mail</button><button class="bouton" id="copier-mail">Copier le mail</button>' : ""}
-          ${/\n## Actions à faire\n/.test(texte) ? '<button class="bouton" id="vers-rappels">Ajouter à Rappels</button>' : ""}
-          <button class="bouton" id="copier">Copier le compte rendu</button>
-          <button class="bouton" id="ameliorer">Améliorer la transcription</button>
-          <button class="bouton" id="finder">Afficher dans le Finder</button>
-          ${aAudio ? '<button class="bouton danger" id="suppr-audio">Supprimer l\'audio</button>' : ""}
-          <button class="bouton danger" id="suppr-cr">Supprimer</button>
-        </div>
       </header>
       <div class="md">${markdown(texte)}</div>`;
     $("#lecteur").scrollTop = 0;
     $("#ameliorer").onclick = () => ouvrirAmelioration(c, aAudio);
+    // Menu « Plus » : s'ouvre sous le bouton, se ferme au clic ailleurs ou avec Échap
+    const basculerMenu = (ouvrir) => {
+      $("#menu-plus").hidden = !ouvrir;
+      $("#plus").setAttribute("aria-expanded", ouvrir);
+    };
+    $("#plus").onclick = (ev) => { ev.stopPropagation(); basculerMenu($("#menu-plus").hidden); };
+    $("#menu-plus").onclick = (ev) => ev.stopPropagation();
     $("#finder").onclick = () => api("/api/ouvrir", { cible: "compte-rendu", projet: c.projet, fichier: c.fichier });
     // Bloc de contexte compact pour Claude (ou, pour les anciens comptes rendus, le compte rendu sans la transcription)
     $("#copier-claude").onclick = async () => {
@@ -1673,6 +1916,38 @@
       message(e.maj ? `Version ${e.maj} disponible.` : "Tu as la dernière version.");
     } catch (err) { message(err.message); }
   });
+
+  // ============ Onglets des Réglages ============
+  // Chaque titre de groupe range ce qui le suit (groupe, notes) dans un onglet
+  (function rangerReglages() {
+    const onglets = {
+      "Analyse par l'IA": "analyse", "Clé API Anthropic": "analyse", "Clé API OpenAI": "analyse",
+      "Ton contexte": "analyse", "Claude peut lire tes comptes rendus": "analyse",
+      "Transcription": "enregistrement", "Enregistrement": "enregistrement",
+      "Tester l'enregistrement": "enregistrement", "Quand un appel commence": "enregistrement",
+      "Stockage": "fichiers", "Garder les audios": "fichiers", "Erreurs": "app", "Mises à jour": "app",
+    };
+    const contenu = document.querySelector("#vue-reglages .contenu");
+    let courant = null;
+    for (const el of contenu.children) {
+      if (el.matches("h1, .segments")) continue;
+      if (el.classList.contains("titre-groupe")) courant = onglets[el.textContent.trim()] || "app";
+      if (courant) el.dataset.dansOnglet = courant;
+    }
+    const afficher = (nom) => {
+      contenu.querySelectorAll("[data-dans-onglet]").forEach((el) => { el.hidden = el.dataset.dansOnglet !== nom; });
+      contenu.querySelectorAll("[data-onglet]").forEach((b) => b.setAttribute("aria-selected", b.dataset.onglet === nom));
+      try { localStorage.setItem("onglet-reglages", nom); } catch (_) {}
+    };
+    contenu.querySelector(".segments").addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-onglet]");
+      if (b) afficher(b.dataset.onglet);
+    });
+    let initial = "analyse";
+    try { initial = localStorage.getItem("onglet-reglages") || initial; } catch (_) {}
+    afficher(initial);
+    window.afficherOngletReglages = afficher;
+  })();
 
   // ============ Améliorer la transcription ============
   let cibleAmelioration = null, modeAmelioration = "corriger";

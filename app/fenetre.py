@@ -49,6 +49,7 @@ def apres_demarrage():
     try:
         from PyObjCTools import AppHelper
         AppHelper.callAfter(identite_macos)
+        AppHelper.callAfter(barre_de_titre_integree)
         AppHelper.callLater(0.4, mettre_au_premier_plan)   # une fois la fenêtre affichée
     except Exception:
         pass
@@ -101,6 +102,24 @@ def accepter_premier_clic():
             objc.selector(acceptsFirstMouse_, selector=b"acceptsFirstMouse:", signature=b"Z@:@")])
     except Exception as e:
         print(f"Premier clic : {e}", flush=True)
+
+
+def barre_de_titre_integree():
+    """Style macOS 26 : le contenu passe sous la barre de titre (transparente), les feux
+    tricolores se posent dans la barre latérale. La bande du haut reste déplaçable."""
+    try:
+        from AppKit import NSApplication, NSColor
+        for f in NSApplication.sharedApplication().windows():
+            f.setStyleMask_(f.styleMask() | (1 << 15))   # NSWindowStyleMaskFullSizeContentView
+            f.setTitlebarAppearsTransparent_(True)
+            f.setTitleVisibility_(1)                      # NSWindowTitleHidden
+            try:
+                # pywebview colore la barre de titre : on la rend transparente
+                f.contentView().superview().subviews().lastObject().setBackgroundColor_(NSColor.clearColor())
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"Barre de titre : {e}", flush=True)
 
 
 def mettre_au_premier_plan():
