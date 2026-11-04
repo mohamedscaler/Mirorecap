@@ -1120,7 +1120,11 @@ class App(rumps.App):
         if self.fenetre and self.fenetre.poll() is None:
             self.fenetre.terminate()
         url = f"http://127.0.0.1:{self.serveur.server_port}/" + (f"#{vue}" if vue else "")
-        self.fenetre = subprocess.Popen([sys.executable, str(DOSSIER_CODE / "fenetre.py"), url])
+        # Python nommé « MiroRecap » (créé à la construction) : c'est ce nom qu'affiche le Dock
+        python = Path(sys.executable).with_name("MiroRecap")
+        if not python.exists():
+            python = Path(sys.executable)
+        self.fenetre = subprocess.Popen([str(python), str(DOSSIER_CODE / "fenetre.py"), url])
 
     def ouvrir_dernier(self, _):
         if self.dernier:

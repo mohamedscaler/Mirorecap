@@ -68,6 +68,11 @@ cat > "$APP/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
+# 6 ter. Exécutable Python nommé « MiroRecap » pour la fenêtre : macOS affiche ce nom dans le Dock
+#        et le Cmd+Tab (au lieu de « python3.12 »). Même dossier, donc mêmes bibliothèques.
+PY_REEL="$(cd "$RES/python/bin" && readlink python3 || echo python3)"
+cp "$RES/python/bin/$PY_REEL" "$RES/python/bin/MiroRecap"
+
 # 6 bis. Identité du Python embarqué : notifications au nom de MiroRecap (et non de l'Éditeur de script)
 cat > "$RES/python/bin/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
