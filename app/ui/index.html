@@ -780,8 +780,12 @@
     let texteMaj = `MiroRecap ${e.maj} est disponible.`;
     if (e.maj_en_cours && mp.phase === "telechargement") {
       const pct = mp.total ? Math.min(100, Math.floor(100 * mp.fait / mp.total)) : 0;
-      texteMaj = `Téléchargement de MiroRecap ${e.maj} · ${pct} % (${Math.round(mp.fait / 1e6)} / ${Math.round(mp.total / 1e6)} Mo)`;
+      const taille = (o) => o < 1e6 ? `${Math.max(1, Math.round(o / 1e3))} Ko` : `${Math.round(o / 1e6)} Mo`;
+      texteMaj = `Téléchargement de MiroRecap ${e.maj} · ${pct} % (${taille(mp.fait)} / ${taille(mp.total)})`;
       $("#maj-barre").style.width = pct + "%";
+    } else if (e.maj_en_cours && mp.phase === "redemarrage") {
+      texteMaj = `MiroRecap ${e.maj} est prêt, redémarrage…`;
+      $("#maj-barre").style.width = "100%";
     } else if (e.maj_en_cours) {
       texteMaj = `Installation de MiroRecap ${e.maj}… l'app va se relancer toute seule.`;
       $("#maj-barre").style.width = "100%";

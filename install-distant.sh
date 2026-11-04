@@ -55,7 +55,7 @@ for _ in $(seq 1 30); do
 done
 
 # 3b. Tout ce qui tourne encore depuis le bundle (lanceur, moteur, fenêtre, capture du son)
-MOTIF="MiroRecap\.app/Contents/|Resources/app/(app|fenetre)\.py|MiroRecap/(app|fenetre)\.py"
+MOTIF="MiroRecap\.app/Contents/|Resources/app/(app|fenetre|demarrage)\.py|MiroRecap/code/.*\.py|MiroRecap/(app|fenetre)\.py"
 encore_lance() { pgrep -f "$MOTIF" >/dev/null || pgrep -x MiroRecap >/dev/null; }
 if encore_lance; then
   pkill -TERM -f "$MOTIF" 2>/dev/null || true
@@ -100,7 +100,7 @@ fi
 # 6. Contrôle : la version installée est bien la nouvelle, et elle tourne
 INSTALLEE="$(tr -d '[:space:]' < "$CIBLE/Contents/Resources/app/VERSION")"
 sleep 4
-if pgrep -f "MiroRecap\.app/Contents/Resources/app/app\.py" >/dev/null; then
+if pgrep -f "MiroRecap\.app/Contents/Resources/(app/app|app/demarrage|python/bin/python3)" >/dev/null; then
   echo "✅ MiroRecap $INSTALLEE est installé et lancé."
 else
   echo "⚠️  MiroRecap $INSTALLEE est installé mais ne s'est pas relancé, nouvel essai"

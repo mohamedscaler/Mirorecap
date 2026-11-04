@@ -84,7 +84,7 @@ int main(int argc, const char *argv[]) {
         /* Chemins dans le bundle */
         NSString *contents = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:@"Contents"];
         NSString *python = [contents stringByAppendingPathComponent:@"Resources/python/bin/python3"];
-        NSString *script = [contents stringByAppendingPathComponent:@"Resources/app/app.py"];
+        NSString *script = [contents stringByAppendingPathComponent:@"Resources/app/demarrage.py"];
 
         /* Journal dans ~/Library/Application Support/MiroRecap/app.log */
         NSString *dossier = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/MiroRecap"];

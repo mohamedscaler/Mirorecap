@@ -1,0 +1,30 @@
+# Mise à jour légère : joint code.zip + maj.json à la release en moins d'une minute.
+# Les apps dont le moteur (app/MOTEUR) est identique se mettent à jour avec ça seulement,
+# sans attendre le DMG. Si app/MOTEUR change, elles attendent le DMG (dmg.yml).
+name: Publier le code
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version = numéro du tag
+        run: echo "${GITHUB_REF_NAME#v}" > app/VERSION
+
+      - name: Construire code.zip et maj.json
+        run: bash build/paquet_code.sh
+
+      - name: Joindre à la release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/code.zip
+            dist/maj.json

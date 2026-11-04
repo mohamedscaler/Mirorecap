@@ -63,3 +63,10 @@ Quitte MiroRecap (🎙 → Quitter), puis mets **MiroRecap** à la corbeille dep
 ### Publier une nouvelle version (pour le mainteneur)
 
 Sur GitHub : **Releases → Draft a new release**, crée un tag `vX.Y` plus grand que le précédent, puis clique sur **Publish release**. GitHub construit tout seul `MiroRecap.dmg` (environ 3 minutes) et l'ajoute à la release. Les apps installées proposent alors la mise à jour.
+
+## Mises à jour (pour publier une version)
+
+Deux sortes de mises à jour, choisies automatiquement par l'app :
+
+- **Code seul** (la plupart du temps) : `code.zip` d'environ 600 Ko, joint à la release en moins d'une minute. L'app le vérifie (SHA256), le range dans `~/Library/Application Support/MiroRecap/code/` et redémarre son moteur en 2 secondes. Si le nouveau code plante au démarrage, l'app revient toute seule à la version précédente.
+- **App complète** (DMG) : seulement quand le moteur change. **Si tu modifies `app/requirements.txt`, `app/lanceur.m`, `app/capture-systeme.m`, `app/demarrage.py` ou `build/construire.sh`, augmente le nombre dans `app/MOTEUR`** : les apps attendront alors le DMG.

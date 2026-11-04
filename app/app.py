@@ -44,6 +44,9 @@ import soundfile as sf
 # ---------------------------------------------------------------------------
 
 DOSSIER_CODE = Path(__file__).resolve().parent
+# Code livré dans l'app (Contents/Resources/app). Différent de DOSSIER_CODE quand le code
+# vient d'une mise à jour téléchargée (~/Library/Application Support/MiroRecap/code/actuel)
+CODE_APP = Path(os.environ.get("MIRORECAP_CODE_APP") or DOSSIER_CODE)
 DOSSIER_APP = Path.home() / "Library" / "Application Support" / "MiroRecap"
 
 # Mises à jour : on compare app/VERSION local avec celui de la branche main sur GitHub
@@ -200,16 +203,40 @@ def version_tuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", v)) or (0,)
 
 
-def derniere_version():
-    """Version publiée sur GitHub, ou None si pas de réseau."""
+DOSSIER_CODES = DOSSIER_APP / "code"   # mises à jour du code (actuel, precedent)
+
+
+def moteur_local():
+    """Numéro du moteur livré dans l'app (Python + modules). Une mise à jour du code
+    seul n'est possible que si elle est prévue pour ce même moteur."""
+    try:
+        return (CODE_APP / "MOTEUR").read_text().strip() or "1"
+    except OSError:
+        return "1"
+
+
+def derniere_release():
+    """Dernière version publiée et comment l'installer, ou None (rien à proposer / pas de réseau).
+    Retour : {"version", "type": "code" | "complete", "code": url, "sha256", "taille"}."""
     try:
         requete = urllib.request.Request(URL_VERSION, headers={"Accept": "application/vnd.github+json"})
         with urllib.request.urlopen(requete, timeout=10) as r:
             release = json.loads(r.read().decode())
-        # On ne propose la release que si son DMG est déjà construit
-        if not any(a.get("name") == "MiroRecap.dmg" for a in release.get("assets", [])):
+        version = release.get("tag_name", "").lstrip("v")
+        assets = {a.get("name"): a.get("browser_download_url") for a in release.get("assets", [])}
+        if not version:
             return None
-        return release.get("tag_name", "").lstrip("v") or None
+        # Mise à jour légère : le code seul (quelques centaines de Ko), si le moteur est le même
+        if "maj.json" in assets and "code.zip" in assets:
+            with urllib.request.urlopen(assets["maj.json"], timeout=15) as r:
+                infos = json.loads(r.read().decode())
+            if str(infos.get("moteur")) == moteur_local() and infos.get("sha256"):
+                return {"version": version, "type": "code", "code": assets["code.zip"],
+                        "sha256": infos["sha256"], "taille": infos.get("taille", 0)}
+        # Sinon, l'app complète, une fois son DMG construit
+        if "MiroRecap.dmg" in assets:
+            return {"version": version, "type": "complete"}
+        return None
     except Exception:
         return None
 
@@ -222,7 +249,7 @@ def ouvrir_finder(chemin, reveler=False):
 # Enregistrement micro
 # ---------------------------------------------------------------------------
 
-CAPTURE_SYSTEME = DOSSIER_CODE.parent.parent / "MacOS" / "capture-systeme"
+CAPTURE_SYSTEME = CODE_APP.parent.parent / "MacOS" / "capture-systeme"
 DOSSIER_CAPTURE = DOSSIER_APP / "capture"   # pistes « son système » le temps du mixage
 
 # État de la capture du son système, affiché dans la fenêtre :
@@ -1186,7 +1213,8 @@ class App(rumps.App):
         self.maj = None                  # numéro de la nouvelle version si disponible
         self.derniere_erreur = ""        # message de la dernière erreur de traitement
         self.maj_en_cours = False
-        self.maj_progression = {"phase": "", "fait": 0, "total": 0}   # téléchargement du DMG
+        self.maj_progression = {"phase": "", "fait": 0, "total": 0}   # téléchargement
+        self.maj_infos = None            # comment installer la nouvelle version (derniere_release)
         self._compteur = 0
 
         self.bouton = rumps.MenuItem("Démarrer l'enregistrement", callback=lambda _: self.basculer_enregistrement())
@@ -1223,6 +1251,9 @@ class App(rumps.App):
 
         threading.Thread(target=self.travailleur, daemon=True).start()
         threading.Thread(target=self.boucle_maj, daemon=True).start()
+        # Code téléchargé lancé avec succès : le démarreur ne le comptera pas comme raté
+        if DOSSIER_CODE != CODE_APP:
+            threading.Timer(10, lambda: (DOSSIER_CODE / ".essais").unlink(missing_ok=True)).start()
         # Juste après une mise à jour : on l'annonce
         precedente = CONFIG.pop("version_precedente", None)
         if precedente and precedente != VERSION:
@@ -1271,8 +1302,10 @@ class App(rumps.App):
 
     def verifier_maj_maintenant(self):
         """Compare la version locale à celle de GitHub. Notifie une seule fois par nouvelle version."""
-        v = derniere_version()
+        rel = derniere_release()
+        v = rel["version"] if rel else None
         if v and version_tuple(v) > version_tuple(VERSION):
+            self.maj_infos = rel
             if self.maj != v:
                 if not CONFIG.get("maj_auto", True):
                     notifier("Mise à jour disponible", f"MiroRecap {v} est sortie. 🎙 → Mettre à jour")
@@ -1325,7 +1358,85 @@ class App(rumps.App):
         self.maj_progression = {"phase": "telechargement", "fait": 0, "total": 0}
         if not automatique:
             notifier("Mise à jour en cours", f"Téléchargement de MiroRecap {self.maj}…")
-        threading.Thread(target=self._installer_maj, args=(automatique,), daemon=True).start()
+        leger = bool(self.maj_infos and self.maj_infos.get("type") == "code")
+        cible = self._installer_code if leger else self._installer_maj
+        threading.Thread(target=cible, args=(automatique,), daemon=True).start()
+
+    def _installer_code(self, automatique):
+        """Mise à jour légère : télécharge le nouveau code, le vérifie, le range dans
+        code/actuel (l'ancien passe en code/precedent) puis redémarre le moteur.
+        L'app dans Applications n'est pas touchée."""
+        import hashlib
+        import zipfile
+        infos = self.maj_infos
+        DOSSIER_CODES.mkdir(parents=True, exist_ok=True)
+        nouveau = DOSSIER_CODES / "nouveau"
+        archive = DOSSIER_CODES / "code.zip"
+        try:
+            with urllib.request.urlopen(infos["code"], timeout=60) as reponse, open(archive, "wb") as f:
+                self.maj_progression["total"] = int(reponse.headers.get("Content-Length") or infos.get("taille") or 0)
+                empreinte = hashlib.sha256()
+                while True:
+                    bloc = reponse.read(64 * 1024)
+                    if not bloc:
+                        break
+                    f.write(bloc)
+                    empreinte.update(bloc)
+                    self.maj_progression["fait"] += len(bloc)
+            if empreinte.hexdigest() != infos["sha256"]:
+                raise RuntimeError("fichier téléchargé corrompu (empreinte différente)")
+            shutil.rmtree(nouveau, ignore_errors=True)
+            with zipfile.ZipFile(archive) as z:
+                z.extractall(nouveau)
+            version_zip = (nouveau / "VERSION").read_text().strip()
+            if not (nouveau / "app.py").exists() or version_zip != infos["version"]:
+                raise RuntimeError("archive incomplète")
+            if (nouveau / "MOTEUR").read_text().strip() != moteur_local():
+                raise RuntimeError("code prévu pour un autre moteur")
+            # Rotation : actuel → precedent, nouveau → actuel (renommages instantanés)
+            actuel, precedent = DOSSIER_CODES / "actuel", DOSSIER_CODES / "precedent"
+            shutil.rmtree(precedent, ignore_errors=True)
+            if actuel.exists():
+                actuel.rename(precedent)
+            nouveau.rename(actuel)
+        except Exception as e:
+            shutil.rmtree(nouveau, ignore_errors=True)
+            self.maj_en_cours = False
+            self.maj_progression = {"phase": "", "fait": 0, "total": 0}
+            notifier("Mise à jour impossible pour l'instant", str(e))
+            return
+        finally:
+            archive.unlink(missing_ok=True)
+
+        self.maj_progression["phase"] = "redemarrage"
+        CONFIG["version_precedente"] = VERSION
+        sauver_config(CONFIG)
+        time.sleep(1)   # laisse la fenêtre afficher « Redémarrage… »
+        self.redemarrer_moteur(fenetre=not automatique)
+
+    def redemarrer_moteur(self, fenetre=True):
+        """Relance le moteur sur le nouveau code, dans le même processus (exec) :
+        le lanceur natif ne s'arrête pas, l'app reste dans la barre des menus."""
+        fenetre_ouverte = bool(self.fenetre and self.fenetre.poll() is None)
+        try:
+            if fenetre_ouverte:
+                self.fenetre.terminate()
+                self.fenetre.wait(timeout=3)
+        except Exception:
+            pass
+        try:
+            self.serveur.shutdown()
+            self.serveur.server_close()
+        except Exception:
+            pass
+        if fenetre and fenetre_ouverte:
+            os.environ["MIRORECAP_FENETRE"] = "1"
+        else:
+            os.environ.pop("MIRORECAP_FENETRE", None)
+        sys.stdout.flush()
+        demarreur = CODE_APP / "demarrage.py"
+        script = demarreur if demarreur.exists() else DOSSIER_CODE / "app.py"
+        os.execv(sys.executable, [sys.executable, str(script)])
 
     def _installer_maj(self, automatique):
         dossier = DOSSIER_APP / "maj"
@@ -1539,7 +1650,7 @@ class App(rumps.App):
 
 def preparer_installation():
     """Lancement au démarrage du Mac + nettoyage des anciennes versions installées par script."""
-    bundle = DOSSIER_CODE.parent.parent.parent          # …/MiroRecap.app
+    bundle = CODE_APP.parent.parent.parent              # …/MiroRecap.app
     if bundle.suffix != ".app":
         return
     agent = Path.home() / "Library" / "LaunchAgents" / "fr.mirorecap.app.plist"
