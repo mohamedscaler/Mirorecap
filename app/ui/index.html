@@ -262,7 +262,19 @@
   dialog label { font-weight: 500; margin-top: 4px; }
   dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
   dialog .supprimer-info { color: var(--second); font-size: 11px; }
-  #feuille-modele { width: 460px; }
+  #accueil { width: 480px; }
+  #accueil h2 { margin: 6px 0 2px; }
+  #accueil .d { white-space: normal; }
+  #accueil .petit { font-size: 11px; margin-top: 6px; }
+  #accueil label { margin-top: 8px; }
+  #accueil .actions { align-items: center; }
+  .ac-etapes { display: flex; gap: 6px; justify-content: center; }
+  .ac-etapes span { width: 22px; height: 4px; border-radius: 2px; background: rgba(128,128,128,.3); transition: background .2s; }
+  .ac-etapes span.fait { background: var(--bleu); }
+  #accueil .point.non { background: var(--rouge); }
+  .rang.colonne { flex-direction: column; align-items: stretch; gap: 6px; }
+  .rang.colonne label { font-weight: 500; font-size: 12px; }
+  .contexte textarea, #accueil textarea { width: 100%; resize: vertical; font: inherit; color: inherit; background: var(--champ, rgba(128,128,128,.12)); border: 1px solid var(--separateur, rgba(128,128,128,.25)); border-radius: 8px; padding: 8px 10px; box-sizing: border-box; }
   .bouton.danger { color: var(--rouge, #FF453A); }
   .bouton.danger.confirmer { background: var(--rouge, #FF453A); color: #fff; }
   #fm-choix .rang { cursor: default; }
@@ -489,7 +501,7 @@
       <div class="contenu">
         <h1>Réglages</h1>
 
-        <p class="titre-groupe">Analyse par Claude</p>
+        <p class="titre-groupe">Analyse par l'IA</p>
         <div class="groupe">
           <div class="rang">
             <span id="cc-point" class="point"></span>
@@ -507,7 +519,20 @@
             <button id="cc-annuler" class="bouton" type="button">Annuler</button>
           </div>
         </div>
-        <p class="note">Avec ton abonnement Claude (Pro ou Max), MiroRecap passe par Claude Code : pas de clé API, l'analyse compte dans les limites de ton abonnement. Clique sur Se connecter : le navigateur s'ouvre, tu te connectes à ton compte Claude, puis tu colles le code affiché dans la fenêtre Terminal qui s'ouvre. MiroRecap récupère la connexion tout seul (valable un an).</p>
+        <div class="groupe" style="margin-top:10px">
+          <div class="rang">
+            <span id="gpt-point" class="point"></span>
+            <div class="corps" id="gpt-etat"></div>
+            <button id="gpt-connecter" class="bouton principal" type="button">Se connecter</button>
+            <button id="gpt-deconnecter" class="bouton" type="button">Déconnecter</button>
+          </div>
+          <div id="gpt-aide" class="rang" hidden>
+            <div class="corps"><div class="d">La connexion se termine toute seule une fois connecté dans le navigateur.</div></div>
+            <button id="gpt-ouvrir" class="bouton" type="button">Ouvrir la page</button>
+            <button id="gpt-annuler" class="bouton" type="button">Annuler</button>
+          </div>
+        </div>
+        <p class="note">Avec ton abonnement (Claude Pro/Max ou ChatGPT Plus/Pro), pas de clé API : l'analyse compte dans les limites de ton abonnement. Claude : le navigateur s'ouvre, puis tu colles le code affiché dans la fenêtre Terminal. ChatGPT : tu te connectes dans le navigateur, c'est tout.</p>
 
         <div id="moteurs" class="groupe" role="radiogroup" aria-label="Moteur d'analyse" style="margin-top:14px"></div>
 
@@ -520,6 +545,30 @@
           </form>
         </div>
         <p class="note">Optionnelle si tu utilises ton abonnement. Facturée à l'usage. <button class="lien" type="button" data-ouvrir="console">Créer une clé sur console.anthropic.com</button></p>
+
+        <p class="titre-groupe">Clé API OpenAI</p>
+        <div class="groupe">
+          <div class="rang"><span id="cle-openai-point" class="point"></span><div class="corps" id="cle-openai-etat"></div></div>
+          <form id="form-cle-openai" class="rang">
+            <input id="cle-openai" class="champ" type="password" placeholder="Colle ta clé sk-…" autocomplete="off" aria-label="Clé API OpenAI">
+            <button class="bouton principal" type="submit">Enregistrer</button>
+          </form>
+        </div>
+        <p class="note">Optionnelle. Facturée à l'usage par OpenAI, indépendamment de ChatGPT Plus.</p>
+
+        <p class="titre-groupe">Ton contexte</p>
+        <form id="form-contexte" class="groupe contexte">
+          <div class="rang colonne">
+            <label for="contexte-perso">Qui tu es et ce que tu fais</label>
+            <textarea id="contexte-perso" rows="4" placeholder="Ex : Miro, web designer freelance (Webflow, Shopify). Mes clients sont des artisans et des PME. Je tutoie mes clients. Mes tarifs : site vitrine à partir de 1 500 €."></textarea>
+          </div>
+          <div class="rang colonne">
+            <label for="signature-mail">Signature des mails</label>
+            <textarea id="signature-mail" rows="3" placeholder="Ex : Miro&#10;Growth Marketing · 06 00 00 00 00"></textarea>
+          </div>
+          <div class="rang"><div class="corps"></div><button class="bouton principal" type="submit">Enregistrer</button></div>
+        </form>
+        <p class="note">L'IA s'en sert pour mieux comprendre tes appels et préparer, quand c'est utile, un mail prêt à envoyer (devis, récap, relance…) dans ton ton et avec ta signature. Elle tient aussi compte de ce qui s'est déjà dit sur le projet.</p>
 
         <p class="titre-groupe">Transcription</p>
         <div id="modeles" class="groupe" role="radiogroup" aria-label="Modèle Whisper"></div>
@@ -595,14 +644,62 @@
   </form>
 </dialog>
 
-<!-- Premier lancement : choix du modèle de transcription -->
-<dialog id="feuille-modele" aria-labelledby="fm-titre">
-  <form id="form-modele" method="dialog">
-    <h2 id="fm-titre">Choisis ta transcription</h2>
-    <p class="d" style="margin:0 0 4px">Whisper transcrit tes appels directement sur ton Mac, l'audio ne sort pas de ta machine. Le modèle se télécharge une seule fois. Tu pourras en changer dans les Réglages.</p>
-    <div id="fm-choix" class="groupe" role="radiogroup" aria-label="Modèle de transcription"></div>
+<!-- Premier lancement : assistant de bienvenue -->
+<dialog id="accueil" aria-labelledby="ac-titre">
+  <form id="form-accueil" method="dialog">
+    <div class="ac-etapes" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+
+    <section class="ac-page" data-page="1">
+      <h2 id="ac-titre">Bienvenue dans MiroRecap</h2>
+      <p class="d">Quatre réglages et c'est prêt. D'abord, la transcription : Whisper tourne directement sur ton Mac, l'audio ne sort pas de ta machine. Le modèle se télécharge une seule fois.</p>
+      <div id="fm-choix" class="groupe" role="radiogroup" aria-label="Modèle de transcription"></div>
+    </section>
+
+    <section class="ac-page" data-page="2" hidden>
+      <h2>Qui rédige tes comptes rendus ?</h2>
+      <p class="d">Connecte ton abonnement Claude ou ChatGPT : l'analyse est incluse dans ton forfait, sans clé API. Tu peux connecter les deux.</p>
+      <div class="groupe">
+        <div class="rang"><span id="ac-cc-point" class="point"></span>
+          <div class="corps"><div>Claude</div><div class="d" id="ac-cc-etat">Pro ou Max</div></div>
+          <button class="bouton principal" type="button" id="ac-cc">Se connecter</button></div>
+        <div class="rang"><span id="ac-gpt-point" class="point"></span>
+          <div class="corps"><div>ChatGPT</div><div class="d" id="ac-gpt-etat">Plus, Pro ou Business</div></div>
+          <button class="bouton principal" type="button" id="ac-gpt">Se connecter</button></div>
+      </div>
+      <p class="d petit">Pas d'abonnement ? Tu pourras coller une clé API dans les Réglages.</p>
+    </section>
+
+    <section class="ac-page" data-page="3" hidden>
+      <h2>Enregistrement</h2>
+      <p class="d">MiroRecap enregistre ton micro et, en visio, la voix de tes interlocuteurs (le son qui sort du Mac). macOS va te demander l'autorisation : accepte.</p>
+      <div class="groupe">
+        <div class="rang"><span id="ac-micro-point" class="point"></span>
+          <div class="corps"><div>Micro</div><div class="d" id="ac-micro-etat">Parle quelques mots pendant le test</div></div>
+          <button class="bouton" type="button" id="ac-micro">Tester</button></div>
+        <div class="rang"><span id="ac-son-point" class="point"></span>
+          <div class="corps"><div>Son du Mac</div><div class="d" id="ac-son-etat">Joue un son et vérifie qu'il est capté</div></div>
+          <button class="bouton" type="button" id="ac-son">Tester</button></div>
+      </div>
+    </section>
+
+    <section class="ac-page" data-page="4" hidden>
+      <h2>Ton contexte</h2>
+      <p class="d">Avec ça, l'IA comprend mieux tes appels et prépare tes mails dans ton ton. Tout est modifiable plus tard.</p>
+      <label for="ac-contexte">Qui tu es et ce que tu fais</label>
+      <textarea id="ac-contexte" rows="3" placeholder="Ex : web designer freelance (Webflow, Shopify), clients artisans et PME, je tutoie mes clients."></textarea>
+      <label for="ac-signature">Signature des mails</label>
+      <textarea id="ac-signature" rows="2" placeholder="Ex : Miro · 06 00 00 00 00"></textarea>
+      <label for="ac-conservation">Garder les audios</label>
+      <select id="ac-conservation" class="champ">
+        <option value="0">Toujours</option><option value="90">3 mois</option><option value="30">30 jours</option><option value="7">7 jours</option>
+      </select>
+    </section>
+
     <div class="actions">
-      <button class="bouton principal" type="submit" id="fm-valider">Installer</button>
+      <button class="bouton" type="button" id="ac-retour" hidden>Retour</button>
+      <span style="flex:1"></span>
+      <button class="bouton" type="button" id="ac-passer">Passer</button>
+      <button class="bouton principal" type="submit" id="fm-valider">Continuer</button>
     </div>
   </form>
 </dialog>
@@ -773,7 +870,7 @@
     $("#statut").textContent = statut;
 
     // Premier lancement : choix du modèle
-    if (e.choix_modele && !$("#feuille-modele").open && choixModele === null) ouvrirChoixModele();
+    if (e.accueil && !accueilOuvert) ouvrirAccueil();
 
     // Téléchargement du modèle Whisper
     const md = e.modele || {};
@@ -908,6 +1005,7 @@
         </p>
         <div class="actions">
           <button class="bouton principal" id="copier-claude">Copier pour Claude</button>
+          ${/\n## Mail à envoyer\n/.test(texte) ? '<button class="bouton" id="copier-mail">Copier le mail</button>' : ""}
           <button class="bouton" id="copier">Copier le compte rendu</button>
           <button class="bouton" id="finder">Afficher dans le Finder</button>
           ${aAudio ? '<button class="bouton danger" id="suppr-audio">Supprimer l\'audio</button>' : ""}
@@ -958,6 +1056,13 @@
       selection = null;
       chargerRaccourcis(); chargerComptesRendus();
     });
+    if ($("#copier-mail")) $("#copier-mail").onclick = async () => {
+      const bloc = (texte.split(/\n## Mail à envoyer\n/)[1] || "").split(/\n## |\n---\n/)[0].trim();
+      const objet = (bloc.match(/^\*\*Objet\*\* : (.*)$/m) || [])[1] || "";
+      const corps = bloc.replace(/^\*\*(À|Objet)\*\* : .*\n?/gm, "").trim();
+      try { await navigator.clipboard.writeText((objet ? `Objet : ${objet}\n\n` : "") + corps); message("Mail copié : colle-le dans ta messagerie."); }
+      catch (_) { message("Copie impossible."); }
+    };
     $("#copier").onclick = async () => {
       const sansTranscription = texte.split(/\n---\n/)[0].replace(/\n## Contexte pour Claude[\s\S]*$/, "");
       try { await navigator.clipboard.writeText(sansTranscription); message("Compte rendu copié."); }
@@ -1075,7 +1180,7 @@
       ? `<div>Clé enregistrée</div><div class="d">${esc(r.cle_apercu)}</div>`
       : `<div>Aucune clé</div><div class="d">Pas nécessaire si tu utilises ton abonnement Claude</div>`;
     // Moteur d'analyse
-    const libelles = { abonnement: "abonnement Claude", api: "clé API" };
+    const libelles = { abonnement: "abonnement Claude", chatgpt: "abonnement ChatGPT", api: "clé API Anthropic", openai: "clé API OpenAI" };
     const cx = r.connexion || {};
     const enCours = cx.etat === "installation" || cx.etat === "terminal";
     $("#cc-point").classList.toggle("ok", r.claude_connecte);
@@ -1088,15 +1193,40 @@
     $("#form-code").hidden = !attenteCode;
     $("#cc-aide").hidden = !attenteCode;
     $("#cc-ouvrir").hidden = !cx.url;
+    // ChatGPT
+    const gx = r.connexion_gpt || {};
+    const gptEnCours = gx.etat === "installation" || gx.etat === "navigateur";
+    $("#gpt-point").classList.toggle("ok", r.chatgpt_connecte);
+    let gTitre, gDetail;
+    if (gptEnCours) { gTitre = gx.etat === "installation" ? "Installation…" : "Connexion à ChatGPT en cours…"; gDetail = gx.message; }
+    else if (r.chatgpt_connecte) { gTitre = "Abonnement ChatGPT connecté"; gDetail = "Plus, Pro ou Business, via Codex d'OpenAI"; }
+    else { gTitre = "Abonnement ChatGPT non connecté"; gDetail = gx.etat === "echec" ? gx.message : "Clique sur Se connecter, le navigateur va s'ouvrir"; }
+    $("#gpt-etat").innerHTML = `<div>${esc(gTitre)}</div><div class="d">${esc(gDetail)}</div>`;
+    $("#gpt-connecter").hidden = r.chatgpt_connecte || gptEnCours;
+    $("#gpt-deconnecter").hidden = !r.chatgpt_connecte || gptEnCours;
+    $("#gpt-aide").hidden = gx.etat !== "navigateur";
+    $("#gpt-ouvrir").hidden = !gx.url;
+    clearTimeout(window.suiviGpt);
+    if (gptEnCours) window.suiviGpt = setTimeout(() => { if (!$("#vue-reglages").hidden) chargerReglages(); }, 2000);
+    // Clé OpenAI
+    $("#cle-openai-point").classList.toggle("ok", r.cle_openai_definie);
+    $("#cle-openai-etat").innerHTML = r.cle_openai_definie
+      ? `<div>Clé enregistrée</div><div class="d">${esc(r.cle_openai_apercu)}</div>`
+      : `<div>Aucune clé</div><div class="d">Pas nécessaire si tu utilises un abonnement</div>`;
+    // Ton contexte (sans écraser une saisie en cours)
+    if (document.activeElement !== $("#contexte-perso")) $("#contexte-perso").value = r.contexte_perso || "";
+    if (document.activeElement !== $("#signature-mail")) $("#signature-mail").value = r.signature_mail || "";
     $("#cc-connecter").hidden = r.claude_connecte || enCours;
     $("#cc-deconnecter").hidden = !r.claude_connecte || enCours;
     // Pendant la connexion, on rafraîchit l'état toutes les 2 secondes
     clearTimeout(window.suiviConnexion);
     if (enCours) window.suiviConnexion = setTimeout(() => { if (!$("#vue-reglages").hidden) chargerReglages(); }, 2000);
     const moteurs = [
-      { id: "auto", nom: "Automatique", detail: "Abonnement Claude s'il est installé, sinon clé API" },
+      { id: "auto", nom: "Automatique", detail: "Le premier disponible : Claude, ChatGPT, puis les clés API" },
       { id: "abonnement", nom: "Abonnement Claude", detail: "Via Claude Code, inclus dans Pro et Max" },
-      { id: "api", nom: "Clé API", detail: "Facturée à l'usage sur console.anthropic.com" },
+      { id: "chatgpt", nom: "Abonnement ChatGPT", detail: "Via Codex d'OpenAI, inclus dans Plus, Pro et Business" },
+      { id: "api", nom: "Clé API Anthropic", detail: "Facturée à l'usage sur console.anthropic.com" },
+      { id: "openai", nom: "Clé API OpenAI", detail: "Facturée à l'usage sur platform.openai.com" },
     ];
     $("#moteurs").innerHTML = moteurs.map((m) => `
       <div class="rang cliquable" role="radio" tabindex="0" data-moteur="${m.id}" aria-checked="${m.id === r.moteur}">
@@ -1197,6 +1327,31 @@
     await api("/api/claude-code", { action: "annuler" });
     setTimeout(chargerReglages, 600);
   });
+  $("#gpt-connecter").addEventListener("click", async () => {
+    await api("/api/chatgpt", { action: "connecter" });
+    message("Connexion à ChatGPT : le navigateur va s'ouvrir.");
+    chargerReglages();
+  });
+  $("#gpt-deconnecter").addEventListener("click", async () => {
+    await api("/api/chatgpt", { action: "deconnecter" });
+    message("ChatGPT déconnecté."); chargerReglages(); sonder();
+  });
+  $("#gpt-ouvrir").addEventListener("click", () => api("/api/chatgpt", { action: "ouvrir" }));
+  $("#gpt-annuler").addEventListener("click", async () => { await api("/api/chatgpt", { action: "annuler" }); setTimeout(chargerReglages, 600); });
+  $("#form-cle-openai").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const cle = $("#cle-openai").value.trim();
+    if (!cle) return message("Colle ta clé d'abord.");
+    try { await api("/api/reglages", { cle_openai: cle }); $("#cle-openai").value = ""; message("Clé OpenAI enregistrée."); chargerReglages(); sonder(); }
+    catch (err) { message(err.message); }
+  });
+  $("#form-contexte").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      await api("/api/reglages", { contexte_perso: $("#contexte-perso").value, signature_mail: $("#signature-mail").value });
+      message("Contexte enregistré : il servira dès le prochain appel.");
+    } catch (err) { message(err.message); }
+  });
   $("#cc-deconnecter").addEventListener("click", async () => {
     await api("/api/claude-code", { action: "deconnecter" });
     message("Abonnement Claude déconnecté.");
@@ -1259,22 +1414,36 @@
     } catch (err) { message(err.message); }
   });
 
-  // ============ Choix du modèle au premier lancement ============
-  let choixModele = null;
-  async function ouvrirChoixModele() {
+  // ============ Assistant de bienvenue (premier lancement) ============
+  let choixModele = null, pageAccueil = 1, accueilOuvert = false;
+  async function ouvrirAccueil() {
+    accueilOuvert = true;
     const r = await api("/api/reglages");
     const recommande = "mlx-community/whisper-large-v3-turbo";
-    choixModele = recommande;
+    choixModele = r.modele_choisi ? r.modele_whisper : recommande;
     $("#fm-choix").innerHTML = r.modeles.map((m) => `
-      <div class="rang cliquable" role="radio" tabindex="0" data-choix="${esc(m.id)}" aria-checked="${m.id === recommande}">
+      <div class="rang cliquable" role="radio" tabindex="0" data-choix="${esc(m.id)}" aria-checked="${m.id === choixModele}">
         <div class="corps">
           <div>${esc(m.nom)}${m.id === recommande ? '<span class="badge">Recommandé</span>' : ""}<span class="taille">${esc(m.taille || "")}</span></div>
           <div class="d">${esc(m.detail)}</div>
         </div>
         <span class="coche">${icone("i-coche", 15)}</span>
       </div>`).join("");
-    $("#feuille-modele").showModal();
+    $("#ac-contexte").value = r.contexte_perso || "";
+    $("#ac-signature").value = r.signature_mail || "";
+    $("#ac-conservation").value = String(r.conservation_audio || 0);
+    allerPage(1);
+    $("#accueil").showModal();
     $("#fm-valider").focus();
+  }
+  function allerPage(n) {
+    pageAccueil = n;
+    document.querySelectorAll(".ac-page").forEach((x) => { x.hidden = +x.dataset.page !== n; });
+    document.querySelectorAll(".ac-etapes span").forEach((x, i) => x.classList.toggle("fait", i < n));
+    $("#ac-retour").hidden = n === 1;
+    $("#ac-passer").hidden = n === 1;
+    $("#fm-valider").textContent = n === 1 ? "Installer et continuer" : n === 4 ? "Terminer" : "Continuer";
+    if (n === 2) suivreConnexions();
   }
   function selectionnerModele(r) {
     choixModele = r.dataset.choix;
@@ -1285,16 +1454,62 @@
     const r = ev.target.closest("[data-choix]");
     if (r && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); selectionnerModele(r); }
   });
-  $("#feuille-modele").addEventListener("cancel", (ev) => ev.preventDefault());   // choix obligatoire
-  $("#form-modele").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
+  $("#accueil").addEventListener("cancel", (ev) => ev.preventDefault());
+  $("#ac-retour").addEventListener("click", () => allerPage(pageAccueil - 1));
+  $("#ac-passer").addEventListener("click", () => pageAccueil < 4 ? allerPage(pageAccueil + 1) : terminerAccueil());
+
+  async function terminerAccueil() {
     try {
-      await api("/api/reglages", { modele_whisper: choixModele });
-      $("#feuille-modele").close();
-      message("Téléchargement du modèle lancé, la progression s'affiche en haut.");
+      await api("/api/reglages", {
+        contexte_perso: $("#ac-contexte").value, signature_mail: $("#ac-signature").value,
+        conservation_audio: +$("#ac-conservation").value, accueil_fait: true,
+      });
+      $("#accueil").close();
+      message("C'est prêt. Lance ton premier enregistrement !");
       sonder();
     } catch (err) { message(err.message); }
+  }
+  $("#form-accueil").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      if (pageAccueil === 1) { await api("/api/reglages", { modele_whisper: choixModele }); allerPage(2); }
+      else if (pageAccueil < 4) allerPage(pageAccueil + 1);
+      else terminerAccueil();
+    } catch (err) { message(err.message); }
   });
+
+  // Étape 2 : connexions (état rafraîchi tant que la page est affichée)
+  async function suivreConnexions() {
+    if (!$("#accueil").open || pageAccueil !== 2) return;
+    try {
+      const r = await api("/api/reglages");
+      const cx = r.connexion || {}, gx = r.connexion_gpt || {};
+      $("#ac-cc-point").classList.toggle("ok", r.claude_connecte);
+      $("#ac-cc-etat").textContent = r.claude_connecte ? "Connecté" : cx.etat === "terminal" ? "Suis les étapes dans la fenêtre Terminal…"
+        : cx.etat === "installation" ? "Installation…" : cx.etat === "echec" ? cx.message : "Pro ou Max";
+      $("#ac-cc").hidden = r.claude_connecte || cx.etat === "terminal" || cx.etat === "installation";
+      $("#ac-gpt-point").classList.toggle("ok", r.chatgpt_connecte);
+      $("#ac-gpt-etat").textContent = r.chatgpt_connecte ? "Connecté" : gx.etat === "navigateur" ? "Connecte-toi dans le navigateur…"
+        : gx.etat === "installation" ? (gx.message || "Installation…") : gx.etat === "echec" ? gx.message : "Plus, Pro ou Business";
+      $("#ac-gpt").hidden = r.chatgpt_connecte || gx.etat === "navigateur" || gx.etat === "installation";
+    } catch (_) {}
+    setTimeout(suivreConnexions, 2000);
+  }
+  $("#ac-cc").addEventListener("click", async () => { await api("/api/claude-code", { action: "connecter" }); suivreConnexions(); });
+  $("#ac-gpt").addEventListener("click", async () => { await api("/api/chatgpt", { action: "connecter" }); suivreConnexions(); });
+
+  // Étape 3 : tests d'enregistrement
+  async function lancerTest(bouton, chemin, point, etat, attente) {
+    bouton.disabled = true; $(etat).textContent = attente;
+    try {
+      const r = await api(chemin, {});
+      $(point).classList.toggle("ok", r.ok); $(point).classList.toggle("non", !r.ok);
+      $(etat).textContent = r.message;
+    } catch (err) { $(etat).textContent = err.message; }
+    bouton.disabled = false; bouton.textContent = "Retester";
+  }
+  $("#ac-micro").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-micro", "#ac-micro-point", "#ac-micro-etat", "Écoute… parle maintenant"));
+  $("#ac-son").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-son", "#ac-son-point", "#ac-son-etat", "Test en cours, un son va être joué…"));
 
   // ============ Démarrage ============
   sonder();

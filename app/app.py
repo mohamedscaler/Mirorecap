@@ -31,6 +31,7 @@ import threading
 import time
 import unicodedata
 import urllib.parse
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -78,6 +79,14 @@ CONFIG_DEFAUT = {
     "modele_choisi": False,   # le modèle Whisper est choisi au premier lancement
     # Durée de conservation des audios rangés, en jours (0 = toujours). Les comptes rendus restent.
     "conservation_audio": 0,
+    # ChatGPT (Codex CLI) et clé API OpenAI
+    "chatgpt_connecte": False,
+    "cle_api_openai": "",
+    "modele_openai": "gpt-5",
+    # Ton contexte : utilisé par l'IA pour comprendre les appels et rédiger les mails
+    "contexte_perso": "",
+    "signature_mail": "",
+    "accueil_fait": False,   # assistant de bienvenue terminé
     "modele_claude": "claude-sonnet-5-5",
     # Moteur d'analyse : "auto" (abonnement si Claude Code est installé, sinon clé API),
     # "abonnement" (Claude Code, compte Claude Pro/Max) ou "api" (clé API Anthropic)
@@ -350,6 +359,60 @@ class Enregistreur:
         self._ecrivain.join()  # attend que tout soit bien écrit
         systeme = self.systeme if self.systeme and self.systeme.exists() else None
         return self.chemin, self.debut, systeme
+
+
+def tester_micro():
+    """Enregistre 1,5 s au micro (déclenche la demande d'autorisation la première fois)
+    et dit si du son arrive."""
+    try:
+        frequence = int(sd.query_devices(kind="input")["default_samplerate"])
+        audio = sd.rec(int(frequence * 1.5), samplerate=frequence, channels=1, dtype="float32")
+        sd.wait()
+        niveau = float(np.abs(audio).max()) if audio.size else 0.0
+    except Exception as e:
+        return {"ok": False, "message": f"Micro inaccessible : {e}"}
+    if niveau < 0.0005:
+        return {"ok": False, "message": "Aucun son reçu. Autorise MiroRecap dans Réglages Système → "
+                                        "Confidentialité et sécurité → Microphone, puis réessaie."}
+    return {"ok": True, "message": "Micro OK."}
+
+
+def tester_son_systeme():
+    """Capture 3 s du son du Mac en jouant un son système : déclenche la demande d'autorisation
+    « Enregistrement de l'écran et audio système » au nom de MiroRecap et vérifie le résultat."""
+    import tempfile
+    if not CAPTURE_SYSTEME.exists():
+        return {"ok": False, "message": "Outil de capture absent."}
+    with tempfile.TemporaryDirectory() as tmp:
+        fichier = Path(tmp) / "test.wav"
+        proc = subprocess.Popen([str(CAPTURE_SYSTEME), str(fichier)], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, text=True)
+        try:
+            code = proc.wait(timeout=2)
+            erreur = (proc.stderr.read() or "").strip()
+            SON_SYSTEME.update(etat="refusee", message=erreur)
+            return {"ok": False, "message": "Pas encore autorisé. Accepte la demande de macOS (ou active MiroRecap "
+                                            "dans Réglages Système → Confidentialité et sécurité → Enregistrement "
+                                            "de l'écran et audio système), quitte et rouvre MiroRecap, puis réessaie."}
+        except subprocess.TimeoutExpired:
+            pass
+        for _ in range(2):
+            subprocess.run(["afplay", "/System/Library/Sounds/Glass.aiff"], check=False, timeout=5)
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        try:
+            audio, _ = sf.read(str(fichier), dtype="float32")
+            niveau = float(np.abs(audio).max()) if len(audio) else 0.0
+        except Exception:
+            niveau = 0.0
+    if niveau < 0.001:
+        return {"ok": False, "message": "La capture tourne mais aucun son n'a été reçu. Vérifie que le volume "
+                                        "du Mac n'est pas coupé, puis réessaie."}
+    SON_SYSTEME.update(etat="ok", message="")
+    return {"ok": True, "message": "Son du Mac OK : la voix de tes interlocuteurs sera enregistrée."}
 
 
 def mixer_pistes(micro, systeme):
@@ -627,30 +690,115 @@ def deconnecter_claude_code():
     CONNEXION.update(etat="", message="")
 
 
+# --- Moteurs d'analyse ------------------------------------------------------------
+# "abonnement" : Claude Code avec le compte Claude (Pro/Max)
+# "chatgpt"    : Codex CLI avec le compte ChatGPT (Plus/Pro/Business…)
+# "api"        : clé API Anthropic          "openai" : clé API OpenAI
+
+MOTEURS = ("abonnement", "chatgpt", "api", "openai")
+
+
+def moteurs_prets():
+    """Moteurs utilisables maintenant, dans l'ordre de préférence du mode Automatique."""
+    prets = []
+    if trouver_claude_code() and CONFIG.get("jeton_claude_code"):
+        prets.append("abonnement")
+    if trouver_codex() and CONFIG.get("chatgpt_connecte"):
+        prets.append("chatgpt")
+    if CONFIG.get("cle_api_anthropic"):
+        prets.append("api")
+    if CONFIG.get("cle_api_openai"):
+        prets.append("openai")
+    # Claude Code installé et connecté autrement (« claude » puis /login dans le Terminal)
+    if not prets and trouver_claude_code():
+        prets.append("abonnement")
+    return prets
+
+
 def moteur_effectif():
-    """Moteur réellement utilisé : 'abonnement', 'api', ou None si aucun n'est prêt."""
+    """Moteur réellement utilisé, ou None si aucun n'est prêt."""
     choix = CONFIG.get("moteur", "auto")
-    claude = trouver_claude_code()
-    cle = CONFIG.get("cle_api_anthropic")
-    connecte = bool(claude and CONFIG.get("jeton_claude_code"))
-    if choix == "abonnement":
-        return "abonnement" if claude else None
-    if choix == "api":
-        return "api" if cle else None
-    if connecte:
-        return "abonnement"
-    return "api" if cle else ("abonnement" if claude else None)
+    prets = moteurs_prets()
+    if choix in MOTEURS:
+        if choix == "abonnement":
+            return "abonnement" if trouver_claude_code() else None
+        return choix if choix in prets else None
+    return prets[0] if prets else None
+
+
+def moteurs_a_essayer():
+    """Le moteur choisi, puis (en mode Automatique) les autres prêts en secours."""
+    principal = moteur_effectif()
+    if not principal:
+        return []
+    if CONFIG.get("moteur", "auto") != "auto":
+        return [principal]
+    return [principal] + [m for m in moteurs_prets() if m != principal]
+
+
+NOMS_MOTEURS = {"abonnement": "Claude", "chatgpt": "ChatGPT", "api": "Claude (clé API)", "openai": "OpenAI (clé API)"}
+
+
+# --- Contexte donné à l'IA -----------------------------------------------------------
+
+def bloc_profil():
+    """Qui est l'utilisateur : rempli dans Réglages → Ton contexte."""
+    lignes = []
+    if CONFIG.get("contexte_perso", "").strip():
+        lignes.append(CONFIG["contexte_perso"].strip())
+    if CONFIG.get("signature_mail", "").strip():
+        lignes.append("Signature à utiliser en bas des mails :\n" + CONFIG["signature_mail"].strip())
+    return "\n\n".join(lignes)
+
+
+def historique_projets(limite=6000):
+    """Ce qu'on sait déjà de chaque projet (synthèse « Où on en est », sinon derniers appels),
+    pour classer juste et pour que le mail tienne compte de ce qui s'est déjà dit."""
+    morceaux = []
+    for nom in lister_projets():
+        dossier = DOSSIER_SORTIE / nom
+        synthese = dossier / "_synthese.md"
+        if synthese.exists():
+            texte = re.sub(r"<!--.*?-->", "", synthese.read_text(encoding="utf-8"), flags=re.S).strip()
+            morceaux.append(f"### {nom} (point d'étape)\n{texte[:900]}")
+            continue
+        derniers = sorted((f for f in dossier.glob("*.md") if not f.name.startswith("_")), reverse=True)[:3]
+        if derniers:
+            titres = []
+            for f in derniers:
+                premiere = f.read_text(encoding="utf-8").split("\n", 1)[0]
+                titres.append(f"- {f.name[:10]} : {premiere.lstrip('# ').strip()}")
+            morceaux.append(f"### {nom} (derniers appels)\n" + "\n".join(titres))
+    texte = "\n\n".join(morceaux)
+    return texte[:limite]
+
+
+SCHEMA_ANALYSE_CHAMPS = {
+    "projet": "nom exact d'un des projets listés",
+    "titre": "titre court, 3 à 8 mots",
+    "compte_rendu": "compte rendu en markdown",
+    "contexte_claude": "bloc <appel>…</appel>",
+    "mail_destinataire": "à qui envoyer le mail (nom, rôle), vide si aucun mail",
+    "mail_objet": "objet du mail, vide si aucun mail",
+    "mail_corps": "texte du mail prêt à envoyer avec la signature, vide si aucun mail",
+}
 
 
 def instructions_analyse(noms, projets):
     liste = "\n".join(f"- {nom}" + (f" : {desc}" if desc else "") for nom, desc in projets.items())
+    profil = bloc_profil()
+    historique = historique_projets()
     return f"""Tu analyses des transcriptions automatiques d'appels et de rendez-vous pro (elles peuvent contenir des erreurs de reconnaissance).
+
+{"Qui je suis (c'est moi qui enregistre, utilise-le pour comprendre l'appel et rédiger le mail) :" + chr(10) + profil if profil else "Je n'ai pas encore décrit mon activité."}
 
 Projets existants :
 {liste or "(aucun projet créé pour l'instant)"}
 - {PROJET_PAR_DEFAUT} : rien ne correspond clairement
 
-Choisis le projet dont parle l'enregistrement, en t'appuyant sur les noms de clients, d'entreprises, de produits et les sujets évoqués. En cas de doute, prends "{PROJET_PAR_DEFAUT}".
+{"Ce qu'on sait déjà des projets :" + chr(10) + historique if historique else ""}
+
+Choisis le projet dont parle l'enregistrement, en t'appuyant sur les noms de clients, d'entreprises, de produits, les sujets évoqués et l'historique ci-dessus. En cas de doute, prends "{PROJET_PAR_DEFAUT}".
 
 Rédige le compte rendu en markdown, en français, sans titre principal, avec ces sections (omets celles qui seraient vides) :
 ## Contexte
@@ -661,10 +809,15 @@ Rédige le compte rendu en markdown, en français, sans titre principal, avec ce
 ## Chiffres
 (budget, prix, délais)
 ## Points flous à clarifier
-## Mail de suivi
-(court, vouvoiement)
 
 N'invente rien : si une info est incertaine ou mal transcrite, signale-le.
+
+Mail à préparer : si l'appel appelle un mail de ma part (envoyer un devis, un récapitulatif, des documents promis, confirmer un rendez-vous, relancer, remercier après une première prise de contact…), rédige-le, prêt à envoyer :
+- adressé à la bonne personne, avec ce qui a été dit et convenu (dates, montants, prochaines étapes), en tenant compte de l'historique du projet ;
+- dans mon ton (tutoiement ou vouvoiement selon notre relation dans l'appel), clair et court ;
+- terminé par ma signature si je l'ai donnée ;
+- entre crochets ce qui manque et que je dois compléter, par exemple [montant du devis].
+Si aucun mail n'est utile, laisse les champs du mail vides.
 
 Rédige aussi un bloc « contexte_claude » : la mémoire de cet appel destinée à être collée plus tard dans une conversation avec Claude. Il doit être dense, factuel, sans phrases de politesse ni mise en forme markdown, et tenir en 250 mots maximum. Utilise exactement ces balises, et omets celles qui seraient vides :
 <appel date="JJ/MM/AAAA HH:MM" projet="nom du projet">
@@ -679,108 +832,151 @@ Rédige aussi un bloc « contexte_claude » : la mémoire de cet appel destinée
 </appel>"""
 
 
+def schema_json(noms):
+    """Schéma strict de la réponse (champs tous présents, texte vide si sans objet)."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(SCHEMA_ANALYSE_CHAMPS),
+        "properties": {
+            cle: ({"type": "string", "enum": noms, "description": desc} if cle == "projet"
+                  else {"type": "string", "description": desc})
+            for cle, desc in SCHEMA_ANALYSE_CHAMPS.items()
+        },
+    }
+
+
+def consigne_json(systeme, contenu):
+    exemple = "{" + ", ".join(f'"{c}": "<{d}>"' for c, d in SCHEMA_ANALYSE_CHAMPS.items()) + "}"
+    return (systeme + "\n\nRéponds UNIQUEMENT par un objet JSON valide, sans texte avant ni après, de la forme :\n"
+            + exemple + "\n\n" + contenu)
+
+
+def extraire_json(texte, source):
+    debut, fin = texte.find("{"), texte.rfind("}")
+    if debut == -1 or fin <= debut:
+        raise RuntimeError(f"{source} n'a pas renvoyé de JSON exploitable")
+    return json.loads(texte[debut:fin + 1])
+
+
 def analyser(transcription, date):
-    """Rédige le compte rendu et choisit le projet. Retourne {projet, titre, compte_rendu}."""
-    moteur = moteur_effectif()
-    if not moteur:
-        raise RuntimeError("aucun moteur d'analyse prêt : connecte ton abonnement Claude ou ajoute une clé API (Réglages)")
+    """Rédige le compte rendu (et le mail éventuel) et choisit le projet."""
+    moteurs = moteurs_a_essayer()
+    if not moteurs:
+        raise RuntimeError("aucun moteur d'analyse prêt : connecte Claude ou ChatGPT, ou ajoute une clé API (Réglages)")
 
     projets = lister_projets()
     noms = list(projets.keys()) + [PROJET_PAR_DEFAUT]
     systeme = instructions_analyse(noms, projets)
     contenu = f"Date de l'enregistrement : {date:%d/%m/%Y %H:%M}\n\nTranscription :\n{transcription}"
 
-    if moteur == "abonnement":
+    fonctions = {"abonnement": analyser_abonnement, "chatgpt": analyser_chatgpt,
+                 "api": analyser_api, "openai": analyser_openai}
+    erreurs = []
+    for moteur in moteurs:
         try:
-            donnees = analyser_abonnement(systeme, contenu)
+            donnees = fonctions[moteur](systeme, contenu, noms)
+            break
         except Exception as e:
-            # Mode Automatique : si l'abonnement échoue (pas connecté, limite atteinte…)
-            # et qu'une clé API existe, on passe par l'API plutôt que d'échouer
-            if CONFIG.get("moteur", "auto") == "auto" and CONFIG.get("cle_api_anthropic"):
-                print(f"Abonnement indisponible ({e}), analyse via la clé API.", flush=True)
-                donnees = analyser_api(systeme, contenu, noms)
-            else:
-                raise
+            # Mode Automatique : un moteur indisponible (pas connecté, limite atteinte…) → le suivant
+            print(f"Analyse via {NOMS_MOTEURS[moteur]} impossible : {e}", flush=True)
+            erreurs.append(f"{NOMS_MOTEURS[moteur]} : {e}")
     else:
-        donnees = analyser_api(systeme, contenu, noms)
+        raise RuntimeError(" · ".join(erreurs))
+
     if donnees.get("projet") not in noms:
         donnees["projet"] = PROJET_PAR_DEFAUT
     for cle in ("titre", "compte_rendu"):
         if not str(donnees.get(cle, "")).strip():
-            raise RuntimeError(f"réponse de Claude incomplète ({cle} manquant)")
+            raise RuntimeError(f"réponse incomplète ({cle} manquant)")
+    donnees["moteur"] = moteur
     return donnees
 
 
-def analyser_abonnement(systeme, contenu):
-    """Analyse via Claude Code en mode non interactif, avec le compte Claude (Pro/Max) de l'utilisateur."""
+def executer_claude_code(consigne, sortie_json=True):
+    """Lance Claude Code en mode non interactif ; retourne le texte de la réponse."""
     import tempfile
-
     claude = trouver_claude_code()
-    consigne = (
-        systeme
-        + "\n\nRéponds UNIQUEMENT par un objet JSON valide, sans texte avant ni après, de la forme :\n"
-        + '{"projet": "<nom exact d\'un des projets listés>", "titre": "<titre court, 3 à 8 mots>", '
-        + '"compte_rendu": "<compte rendu en markdown>", "contexte_claude": "<bloc <appel>…</appel>>"}\n\n'
-        + contenu
-    )
     # Dossier vide : Claude Code n'a aucun fichier à lire, il se contente de répondre
     with tempfile.TemporaryDirectory() as dossier_vide:
         r = subprocess.run(
-            [claude, "-p", "Suis les instructions reçues en entrée et réponds uniquement en JSON.",
-             "--output-format", "json", "--model", CONFIG.get("modele_abonnement", "sonnet"),
-             "--max-turns", "1"],
+            [claude, "-p", "Suis les instructions reçues en entrée." + (" Réponds uniquement en JSON." if sortie_json else ""),
+             "--output-format", "json", "--model", CONFIG.get("modele_abonnement", "sonnet"), "--max-turns", "1"],
             input=consigne, capture_output=True, text=True, timeout=900, cwd=dossier_vide,
             env=env_claude_code(),
         )
     sortie = r.stdout.strip()
     if r.returncode != 0 and not sortie:
         detail = (r.stderr.strip().splitlines() or ["erreur inconnue"])[-1]
-        raise RuntimeError(f"Claude Code : {detail} (es-tu bien connecté ? Réglages → Se connecter)")
-
-    # Sortie JSON de Claude Code : la réponse du modèle est dans "result"
-    texte = sortie
+        raise RuntimeError(f"{detail} (es-tu bien connecté ? Réglages → Se connecter)")
     try:
         enveloppe = json.loads(sortie)
-        if isinstance(enveloppe, dict):
-            if enveloppe.get("is_error"):
-                resultat = enveloppe.get("result") or "erreur"
-                if "login" in resultat.lower():
-                    resultat = "pas connecté à ton compte Claude (Réglages → Se connecter, puis /login)"
-                raise RuntimeError(f"Claude Code : {resultat}")
-            texte = enveloppe.get("result", "") or ""
     except json.JSONDecodeError:
-        pass
+        return sortie
+    if isinstance(enveloppe, dict):
+        if enveloppe.get("is_error"):
+            resultat = enveloppe.get("result") or "erreur"
+            if "login" in resultat.lower():
+                resultat = "pas connecté à ton compte Claude (Réglages → Se connecter)"
+            raise RuntimeError(resultat)
+        return enveloppe.get("result", "") or ""
+    return sortie
 
-    # On extrait l'objet JSON de la réponse (au cas où il serait entouré de texte ou de ```)
-    debut, fin = texte.find("{"), texte.rfind("}")
-    if debut == -1 or fin <= debut:
-        raise RuntimeError("Claude n'a pas renvoyé de JSON exploitable")
-    return json.loads(texte[debut:fin + 1])
+
+def analyser_abonnement(systeme, contenu, noms):
+    """Analyse via Claude Code, avec le compte Claude (Pro/Max) de l'utilisateur."""
+    return extraire_json(executer_claude_code(consigne_json(systeme, contenu)), "Claude")
+
+
+def executer_codex(consigne, schema=None):
+    """Lance Codex (ChatGPT) en mode non interactif, sans accès aux fichiers ; retourne sa réponse."""
+    import tempfile
+    codex = trouver_codex()
+    if not codex:
+        raise RuntimeError("Codex n'est pas installé (Réglages → Se connecter à ChatGPT)")
+    with tempfile.TemporaryDirectory() as dossier_vide:
+        sortie = Path(dossier_vide) / "reponse.txt"
+        commande = [codex, "exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only",
+                    "--color", "never", "-o", str(sortie)]
+        if schema:
+            fichier_schema = Path(dossier_vide) / "schema.json"
+            fichier_schema.write_text(json.dumps(schema), encoding="utf-8")
+            commande += ["--output-schema", str(fichier_schema)]
+        r = subprocess.run(commande + ["-"], input=consigne, capture_output=True, text=True,
+                           timeout=900, cwd=dossier_vide, env=env_codex())
+        texte = sortie.read_text(encoding="utf-8").strip() if sortie.exists() else ""
+    if not texte:
+        detail = (r.stderr.strip().splitlines() or r.stdout.strip().splitlines() or ["erreur inconnue"])[-1]
+        if "login" in detail.lower() or "auth" in detail.lower():
+            CONFIG["chatgpt_connecte"] = False
+            sauver_config(CONFIG)
+            detail = "pas connecté à ChatGPT (Réglages → Se connecter à ChatGPT)"
+        raise RuntimeError(detail)
+    return texte
+
+
+def analyser_chatgpt(systeme, contenu, noms):
+    """Analyse via Codex CLI, avec le compte ChatGPT de l'utilisateur."""
+    if not chatgpt_connecte_verifie():   # sinon Codex réessaierait le réseau en boucle
+        CONFIG["chatgpt_connecte"] = False
+        sauver_config(CONFIG)
+        raise RuntimeError("pas connecté à ChatGPT (Réglages → Se connecter à ChatGPT)")
+    return extraire_json(executer_codex(consigne_json(systeme, contenu), schema_json(noms)), "ChatGPT")
 
 
 def analyser_api(systeme, contenu, noms):
     """Analyse via l'API Anthropic (clé API, facturée à l'usage)."""
     import anthropic
 
-    # Outil forcé = Claude renvoie forcément un JSON propre (projet, titre, compte rendu)
-    outil = {
-        "name": "classer_compte_rendu",
-        "description": "Enregistre le compte rendu dans le bon projet.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "projet": {"type": "string", "enum": noms},
-                "titre": {"type": "string", "description": "Titre court et précis, 3 à 8 mots"},
-                "compte_rendu": {"type": "string", "description": "Compte rendu en markdown"},
-                "contexte_claude": {"type": "string", "description": "Bloc <appel>…</appel> dense, à coller dans Claude"},
-            },
-            "required": ["projet", "titre", "compte_rendu", "contexte_claude"],
-        },
-    }
+    # Outil forcé = Claude renvoie forcément un JSON propre
+    schema = schema_json(noms)
+    schema["required"] = ["projet", "titre", "compte_rendu", "contexte_claude"]
+    outil = {"name": "classer_compte_rendu", "description": "Enregistre le compte rendu dans le bon projet.",
+             "input_schema": schema}
     client = anthropic.Anthropic(api_key=CONFIG["cle_api_anthropic"])
     reponse = client.messages.create(
         model=CONFIG["modele_claude"],
-        max_tokens=4096,
+        max_tokens=6000,
         system=systeme,
         tools=[outil],
         tool_choice={"type": "tool", "name": "classer_compte_rendu"},
@@ -789,9 +985,199 @@ def analyser_api(systeme, contenu, noms):
     return next(b for b in reponse.content if b.type == "tool_use").input
 
 
+def appeler_openai(messages, schema=None):
+    """API OpenAI (clé API, facturée à l'usage), sans dépendance supplémentaire."""
+    corps = {"model": CONFIG.get("modele_openai", "gpt-5"), "messages": messages}
+    if schema:
+        corps["response_format"] = {"type": "json_schema",
+                                    "json_schema": {"name": "compte_rendu", "strict": True, "schema": schema}}
+    requete = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions", data=json.dumps(corps).encode(),
+        headers={"Authorization": f"Bearer {CONFIG['cle_api_openai']}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(requete, timeout=900) as r:
+            reponse = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode())["error"]["message"]
+        except Exception:
+            detail = str(e)
+        raise RuntimeError(f"OpenAI : {detail}")
+    return reponse["choices"][0]["message"]["content"] or ""
+
+
+def analyser_openai(systeme, contenu, noms):
+    texte = appeler_openai([{"role": "system", "content": systeme}, {"role": "user", "content": contenu}],
+                           schema_json(noms))
+    return extraire_json(texte, "OpenAI")
+
+
+def appeler_ia_texte(systeme, contenu):
+    """Réponse texte libre (synthèse « Où on en est ») avec le moteur disponible."""
+    erreurs = []
+    for moteur in moteurs_a_essayer():
+        try:
+            if moteur == "abonnement":
+                return executer_claude_code(systeme + "\n\n" + contenu, sortie_json=False)
+            if moteur == "chatgpt":
+                return executer_codex(systeme + "\n\n" + contenu)
+            if moteur == "api":
+                import anthropic
+                client = anthropic.Anthropic(api_key=CONFIG["cle_api_anthropic"])
+                reponse = client.messages.create(model=CONFIG["modele_claude"], max_tokens=4096, system=systeme,
+                                                 messages=[{"role": "user", "content": contenu}])
+                return "".join(b.text for b in reponse.content if b.type == "text")
+            if moteur == "openai":
+                return appeler_openai([{"role": "system", "content": systeme}, {"role": "user", "content": contenu}])
+        except Exception as e:
+            erreurs.append(f"{NOMS_MOTEURS[moteur]} : {e}")
+    raise RuntimeError(" · ".join(erreurs) or "aucun moteur d'analyse prêt (Réglages → Analyse)")
+
+
+# --- Connexion à ChatGPT (Codex CLI) -------------------------------------------------
+
+DOSSIER_BIN = Path.home() / ".local" / "bin"
+URL_CODEX = "https://github.com/openai/codex/releases/latest/download/codex-aarch64-apple-darwin.tar.gz"
+CONNEXION_GPT = {"etat": "", "message": "", "url": ""}
+
+
+def trouver_codex():
+    for c in (shutil.which("codex"), DOSSIER_BIN / "codex", Path("/opt/homebrew/bin/codex"), Path("/usr/local/bin/codex")):
+        if c and Path(c).exists():
+            return str(c)
+    return None
+
+
+def env_codex():
+    env = dict(os.environ)
+    env.pop("OPENAI_API_KEY", None)   # sinon Codex utiliserait une clé à la place du compte ChatGPT
+    return env
+
+
+def installer_codex():
+    """Télécharge Codex CLI (programme officiel d'OpenAI) dans ~/.local/bin."""
+    import tarfile
+    import tempfile
+    DOSSIER_BIN.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / "codex.tar.gz"
+        with urllib.request.urlopen(URL_CODEX, timeout=120) as r, open(archive, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            fait = 0
+            while True:
+                bloc = r.read(1 << 20)
+                if not bloc:
+                    break
+                f.write(bloc)
+                fait += len(bloc)
+                if total:
+                    CONNEXION_GPT["message"] = f"Installation de ChatGPT pour MiroRecap… {int(100 * fait / total)} %"
+        with tarfile.open(archive) as t:
+            membre = next(m for m in t.getmembers() if m.isfile() and m.name.split("/")[-1].startswith("codex"))
+            membre.name = "codex"
+            t.extract(membre, tmp)
+        cible = DOSSIER_BIN / "codex"
+        shutil.move(str(Path(tmp) / "codex"), str(cible))
+        cible.chmod(0o755)
+    return str(cible)
+
+
+def chatgpt_connecte_verifie():
+    codex = trouver_codex()
+    if not codex:
+        return False
+    try:
+        r = subprocess.run([codex, "login", "status"], capture_output=True, text=True, timeout=20, env=env_codex())
+        texte = (r.stdout + r.stderr).lower()
+        return r.returncode == 0 and "logged in" in texte and "not logged in" not in texte
+    except Exception:
+        return False
+
+
+def connecter_chatgpt():
+    """Installe Codex si besoin puis lance « codex login » : le navigateur s'ouvre, l'utilisateur
+    se connecte à son compte ChatGPT, et la connexion se termine toute seule."""
+    if CONNEXION_GPT["etat"] in ("installation", "navigateur"):
+        return
+
+    def tache():
+        proc = None
+        try:
+            codex = trouver_codex()
+            if not codex:
+                CONNEXION_GPT.update(etat="installation", message="Installation de ChatGPT pour MiroRecap…", url="")
+                codex = installer_codex()
+            if chatgpt_connecte_verifie():
+                CONFIG["chatgpt_connecte"] = True
+                sauver_config(CONFIG)
+                CONNEXION_GPT.update(etat="ok", message="Connecté à ton compte ChatGPT.", url="")
+                return
+            CONNEXION_GPT.update(etat="navigateur", url="",
+                                 message="Connecte-toi à ton compte ChatGPT dans le navigateur qui vient de s'ouvrir.")
+            proc = subprocess.Popen([codex, "login"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, text=True, env=env_codex())
+
+            def lire_sortie():
+                for ligne in proc.stdout:
+                    lien = re.search(r"https://\S*auth\S*", ligne)
+                    if lien and not CONNEXION_GPT["url"]:
+                        CONNEXION_GPT["url"] = lien.group(0)
+            threading.Thread(target=lire_sortie, daemon=True).start()
+
+            fin = time.time() + 900
+            while time.time() < fin and CONNEXION_GPT["etat"] == "navigateur":
+                if proc.poll() is not None:
+                    break
+                time.sleep(1)
+            if CONNEXION_GPT["etat"] == "annule":
+                CONNEXION_GPT.update(etat="", message="", url="")
+                return
+            if chatgpt_connecte_verifie():
+                CONFIG["chatgpt_connecte"] = True
+                sauver_config(CONFIG)
+                CONNEXION_GPT.update(etat="ok", message="Connecté à ton compte ChatGPT.", url="")
+                notifier("ChatGPT connecté", "MiroRecap peut maintenant analyser avec ton compte ChatGPT.")
+            else:
+                raise RuntimeError("connexion non terminée")
+        except Exception as e:
+            print(f"Connexion ChatGPT : {e}", flush=True)
+            CONNEXION_GPT.update(etat="echec", message=f"Échec : {e}")
+        finally:
+            if proc and proc.poll() is None:
+                proc.terminate()
+
+    threading.Thread(target=tache, daemon=True).start()
+
+
+def deconnecter_chatgpt():
+    codex = trouver_codex()
+    if codex:
+        subprocess.run([codex, "logout"], capture_output=True, timeout=20, env=env_codex())
+    CONFIG["chatgpt_connecte"] = False
+    sauver_config(CONFIG)
+    CONNEXION_GPT.update(etat="", message="", url="")
+
+
+def annuler_connexion_chatgpt():
+    CONNEXION_GPT.update(etat="annule" if CONNEXION_GPT["etat"] == "navigateur" else "", message="", url="")
+
+
 # ---------------------------------------------------------------------------
 # Rangement
 # ---------------------------------------------------------------------------
+
+def section_mail(analyse):
+    corps = str(analyse.get("mail_corps") or "").strip()
+    if not corps:
+        return ""
+    entete = ""
+    if str(analyse.get("mail_destinataire") or "").strip():
+        entete += f"**À** : {analyse['mail_destinataire'].strip()}\n"
+    if str(analyse.get("mail_objet") or "").strip():
+        entete += f"**Objet** : {analyse['mail_objet'].strip()}\n"
+    return f"## Mail à envoyer\n\n{entete}\n{corps}\n\n"
+
 
 def ranger(chemin_audio, date, transcription, analyse):
     dossier = DOSSIER_SORTIE / analyse["projet"]
@@ -808,6 +1194,7 @@ def ranger(chemin_audio, date, transcription, analyse):
         f"- **Projet** : {analyse['projet']}\n"
         f"- **Audio** : [audio/{audio_final.name}](audio/{audio_final.name})\n\n"
         f"{analyse['compte_rendu'].strip()}\n\n"
+        + section_mail(analyse)
         + (f"## Contexte pour Claude\n\n```xml\n{analyse['contexte_claude'].strip()}\n```\n\n" if analyse.get("contexte_claude") else "")
         + f"---\n\n## Transcription complète\n\n{transcription}\n",
         encoding="utf-8",
@@ -952,35 +1339,6 @@ def section_markdown(texte, titre):
     return m.group(1).strip() if m else ""
 
 
-def appeler_claude_texte(systeme, contenu):
-    """Demande une réponse texte à Claude (abonnement ou clé API)."""
-    import tempfile
-
-    moteur = moteur_effectif()
-    if moteur == "abonnement":
-        with tempfile.TemporaryDirectory() as dossier_vide:
-            r = subprocess.run(
-                [trouver_claude_code(), "-p", "Suis les instructions reçues en entrée.",
-                 "--output-format", "json", "--model", CONFIG.get("modele_abonnement", "sonnet"), "--max-turns", "1"],
-                input=systeme + "\n\n" + contenu, capture_output=True, text=True, timeout=900,
-                cwd=dossier_vide, env=env_claude_code(),
-            )
-        try:
-            enveloppe = json.loads(r.stdout)
-        except json.JSONDecodeError:
-            raise RuntimeError(f"Claude Code : {(r.stderr.strip().splitlines() or ['erreur'])[-1]}")
-        if enveloppe.get("is_error"):
-            raise RuntimeError(f"Claude Code : {enveloppe.get('result') or 'erreur'}")
-        return enveloppe.get("result", "")
-    if moteur == "api":
-        import anthropic
-        client = anthropic.Anthropic(api_key=CONFIG["cle_api_anthropic"])
-        reponse = client.messages.create(model=CONFIG["modele_claude"], max_tokens=4096, system=systeme,
-                                         messages=[{"role": "user", "content": contenu}])
-        return "".join(b.text for b in reponse.content if b.type == "text")
-    raise RuntimeError("aucun moteur d'analyse prêt (Réglages → Analyse par Claude)")
-
-
 SYNTHESES = {}   # état des synthèses en cours, par projet
 
 
@@ -1013,7 +1371,7 @@ Rédige en français, en markdown, sans titre principal, avec ces sections (omet
 ## Prochaines étapes
 ## Points à clarifier
 Quand deux appels se contredisent, garde le plus récent et signale le changement. N'invente rien."""
-            synthese = appeler_claude_texte(systeme, contenu).strip()
+            synthese = appeler_ia_texte(systeme, contenu).strip()
             (dossier / "_synthese.md").write_text(
                 f"<!-- {dt.datetime.now():%Y-%m-%dT%H:%M} · {len(fichiers)} comptes rendus -->\n{synthese}\n", encoding="utf-8")
             SYNTHESES[nom] = "ok"
@@ -1132,6 +1490,15 @@ def lire_reglages():
         "son_systeme": CONFIG.get("son_systeme", True),
         "maj_auto": CONFIG.get("maj_auto", True),
         "conservation_audio": int(CONFIG.get("conservation_audio") or 0),
+        "chatgpt_connecte": bool(CONFIG.get("chatgpt_connecte")),
+        "codex": bool(trouver_codex()),
+        "connexion_gpt": CONNEXION_GPT,
+        "cle_openai_definie": bool(CONFIG.get("cle_api_openai")),
+        "cle_openai_apercu": (lambda c: f"{c[:7]}…{c[-4:]}" if len(c) > 12 else "")(CONFIG.get("cle_api_openai", "")),
+        "contexte_perso": CONFIG.get("contexte_perso", ""),
+        "signature_mail": CONFIG.get("signature_mail", ""),
+        "accueil_fait": bool(CONFIG.get("accueil_fait")),
+        "modele_choisi": bool(CONFIG.get("modele_choisi")),
     }
 
 
@@ -1139,7 +1506,14 @@ def sauver_reglages(donnees):
     redemarrage = False
     if donnees.get("cle", "").strip():
         CONFIG["cle_api_anthropic"] = donnees["cle"].strip()
-    if donnees.get("moteur") in ("auto", "abonnement", "api"):
+    if donnees.get("cle_openai", "").strip():
+        CONFIG["cle_api_openai"] = donnees["cle_openai"].strip()
+    for champ in ("contexte_perso", "signature_mail"):
+        if isinstance(donnees.get(champ), str):
+            CONFIG[champ] = donnees[champ].strip()[:4000]
+    if donnees.get("accueil_fait") is True:
+        CONFIG["accueil_fait"] = True
+    if donnees.get("moteur") in ("auto",) + MOTEURS:
         CONFIG["moteur"] = donnees["moteur"]
     if donnees.get("modele_whisper") in {m["id"] for m in MODELES_WHISPER}:
         change = donnees["modele_whisper"] != CONFIG["modele_whisper"]
@@ -1237,6 +1611,22 @@ class Api(http.server.BaseHTTPRequestHandler):
             if self.path == "/api/projets/synthese":
                 lancer_synthese(d.get("nom", ""))
                 return self._json(200, {"ok": True})
+            if self.path == "/api/chatgpt":
+                action = d.get("action")
+                if action == "deconnecter":
+                    deconnecter_chatgpt()
+                elif action == "annuler":
+                    annuler_connexion_chatgpt()
+                elif action == "ouvrir":
+                    if CONNEXION_GPT.get("url", "").startswith("https://"):
+                        subprocess.run(["open", CONNEXION_GPT["url"]], check=False)
+                else:
+                    connecter_chatgpt()
+                return self._json(200, lire_reglages())
+            if self.path == "/api/test-micro":
+                return self._json(200, tester_micro())
+            if self.path == "/api/test-son":
+                return self._json(200, tester_son_systeme())
             if self.path == "/api/supprimer":
                 if d.get("quoi") == "audio":
                     return self._json(200, supprimer_audio(d.get("projet", ""), d.get("fichier", "")))
@@ -1373,6 +1763,15 @@ class App(rumps.App):
         if not CONFIG.get("modele_choisi") and modele_local(CONFIG["modele_whisper"]):
             CONFIG["modele_choisi"] = True
             sauver_config(CONFIG)
+        # Installation d'avant l'assistant (5.3) déjà configurée : on ne le montre pas
+        try:
+            cles_fichier = json.loads(FICHIER_CONFIG.read_text(encoding="utf-8")) if FICHIER_CONFIG.exists() else {}
+        except Exception:
+            cles_fichier = {}
+        if "accueil_fait" not in cles_fichier and (CONFIG.get("modele_choisi") or CONFIG.get("jeton_claude_code")
+                                                   or CONFIG.get("cle_api_anthropic")):
+            CONFIG["accueil_fait"] = True
+            sauver_config(CONFIG)
         if CONFIG.get("modele_choisi"):
             preparer_modele_en_fond()
         # L'UI de la barre de menus ne doit être modifiée que depuis le thread principal
@@ -1385,7 +1784,7 @@ class App(rumps.App):
         signal.signal(signal.SIGUSR1, lambda *_: setattr(self, "fenetre_demandee", True))
 
         # Premier lancement (rien de configuré) : choix du modèle puis réglages ; ouverture par l'utilisateur : fenêtre
-        if not CONFIG.get("modele_choisi") or moteur_effectif() is None:
+        if not CONFIG.get("accueil_fait") or moteur_effectif() is None:
             self.ouvrir_fenetre("reglages")
         elif os.environ.get("MIRORECAP_FENETRE") == "1":
             self.ouvrir_fenetre()
@@ -1410,6 +1809,7 @@ class App(rumps.App):
             "derniere_erreur": self.derniere_erreur,
             "modele": MODELE,
             "choix_modele": not CONFIG.get("modele_choisi"),
+            "accueil": not CONFIG.get("accueil_fait"),
             "son_systeme": SON_SYSTEME,
         }
 
