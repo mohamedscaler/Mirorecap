@@ -1627,6 +1627,8 @@ class Api(http.server.BaseHTTPRequestHandler):
                 return self._json(200, tester_micro())
             if self.path == "/api/test-son":
                 return self._json(200, tester_son_systeme())
+            if self.path == "/api/quitter":
+                return self._json(200, self.app.quitter_depuis_fenetre())
             if self.path == "/api/supprimer":
                 if d.get("quoi") == "audio":
                     return self._json(200, supprimer_audio(d.get("projet", ""), d.get("fichier", "")))
@@ -2089,11 +2091,32 @@ class App(rumps.App):
         python = Path(sys.executable).with_name("MiroRecap")
         if not python.exists():
             python = Path(sys.executable)
-        self.fenetre = subprocess.Popen([str(python), str(DOSSIER_CODE / "fenetre.py"), url])
+        self.fenetre = subprocess.Popen([str(python), str(DOSSIER_CODE / "fenetre.py"), url, JETON])
 
     def ouvrir_dernier(self, _):
         if self.dernier:
             ouvrir_finder(DOSSIER_SORTIE / self.dernier["projet"] / self.dernier["fichier"], reveler=True)
+
+    def quitter_depuis_fenetre(self):
+        """Cmd+Q dans la fenêtre : on quitte tout, sauf si un enregistrement ou une analyse tourne."""
+        if self.enreg.actif:
+            notifier("MiroRecap reste ouvert", "Un enregistrement est en cours : il continue dans la barre des menus.")
+            return {"quitte": False}
+        if self.statut or not self.file_traitement.empty():
+            notifier("MiroRecap reste ouvert", "Une analyse est en cours : MiroRecap la termine dans la barre des menus.")
+            return {"quitte": False}
+
+        def fermer():
+            time.sleep(0.4)   # laisse la fenêtre se fermer d'abord
+            try:
+                from PyObjCTools import AppHelper
+                AppHelper.callAfter(rumps.quit_application)   # sur le fil principal
+                time.sleep(3)
+            except Exception:
+                pass
+            os._exit(0)   # au cas où l'arrêt normal n'aurait pas abouti
+        threading.Thread(target=fermer, daemon=True).start()
+        return {"quitte": True}
 
     def quitter(self, _):
         if self.fenetre and self.fenetre.poll() is None:

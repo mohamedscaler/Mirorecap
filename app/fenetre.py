@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 url = sys.argv[1]
+JETON = sys.argv[2] if len(sys.argv) > 2 else ""   # pour parler à l'API de l'app
 ICONE = Path(__file__).resolve().parent / "icone.png"
 
 try:
@@ -54,7 +55,38 @@ def apres_demarrage():
     threading.Thread(target=surveiller_app, daemon=True).start()
 
 
+def quitter_miro_recap():
+    """Demande à l'app (barre des menus) de se fermer aussi. Elle reste ouverte si un
+    enregistrement ou une analyse est en cours, pour ne rien perdre."""
+    import urllib.request
+    from urllib.parse import urlparse
+    base = "{0.scheme}://{0.netloc}".format(urlparse(url))
+    try:
+        requete = urllib.request.Request(base + "/api/quitter", data=b"{}", method="POST",
+                                         headers={"X-Jeton": JETON, "Content-Type": "application/json"})
+        urllib.request.urlopen(requete, timeout=2).read()
+    except Exception:
+        pass
+
+
+def intercepter_cmd_q():
+    """Cmd+Q (menu Quitter) ferme toute l'app ; le bouton rouge ne ferme que la fenêtre."""
+    try:
+        import objc
+        from webview.platforms.cocoa import BrowserView
+
+        def applicationShouldTerminate_(self, app):
+            quitter_miro_recap()
+            return 1   # NSTerminateNow
+
+        objc.classAddMethods(BrowserView.AppDelegate, [
+            objc.selector(applicationShouldTerminate_, selector=b"applicationShouldTerminate:", signature=b"Q@:@")])
+    except Exception as e:
+        print(f"Cmd+Q : {e}", flush=True)
+
+
 identite_macos()
+intercepter_cmd_q()
 # Liquid Glass : la fenêtre laisse voir le bureau flouté derrière (vibrancy macOS),
 # l'interface pose ses panneaux de verre par-dessus.
 def couleur_fond():
