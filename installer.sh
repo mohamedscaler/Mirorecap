@@ -46,7 +46,7 @@ rm -rf "$ANCIEN" "$HOME/Applications/CompteRendu.app" "$HOME/Library/LaunchAgent
 # 5. Code + environnement Python
 echo "→ Installation des modules Python (quelques minutes)…"
 mkdir -p "$DEST"
-cp app/app.py app/fenetre.py app/requirements.txt app/VERSION "$DEST/"
+cp app/app.py app/fenetre.py app/requirements.txt app/VERSION app/icone.png "$DEST/"
 rm -rf "$DEST/ui" && cp -R app/ui "$DEST/ui"
 [ -x "$DEST/.venv/bin/python" ] || "$PY" -m venv "$DEST/.venv"
 "$DEST/.venv/bin/pip" install --upgrade pip -q
@@ -57,6 +57,16 @@ echo "→ Création de l'app…"
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS"
 clang -O2 -o "$BUNDLE/Contents/MacOS/MiroRecap" app/lanceur.c
+
+# Icône de l'app (Finder, Launchpad) : .icns construit à partir du PNG
+mkdir -p "$BUNDLE/Contents/Resources"
+ICONSET="$(mktemp -d)/MiroRecap.iconset"
+mkdir -p "$ICONSET"
+for T in 16 32 128 256 512; do
+  sips -z $T $T app/icone.png --out "$ICONSET/icon_${T}x${T}.png" >/dev/null
+  sips -z $((T*2)) $((T*2)) app/icone.png --out "$ICONSET/icon_${T}x${T}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$BUNDLE/Contents/Resources/MiroRecap.icns" || true
 VERSION="$(tr -d '[:space:]' < app/VERSION)"
 cat > "$BUNDLE/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -67,6 +77,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<EOF
   <key>CFBundleDisplayName</key><string>MiroRecap</string>
   <key>CFBundleIdentifier</key><string>fr.mirorecap.app</string>
   <key>CFBundleExecutable</key><string>MiroRecap</string>
+  <key>CFBundleIconFile</key><string>MiroRecap</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
