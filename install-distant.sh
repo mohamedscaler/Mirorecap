@@ -16,8 +16,13 @@ fi
 TMP="$(mktemp -d)"
 trap 'hdiutil detach "$TMP/vol" -quiet 2>/dev/null || true; rm -rf "$TMP"' EXIT
 
-echo "⬇️  Téléchargement de MiroRecap…"
-curl -fL --progress-bar -o "$TMP/MiroRecap.dmg" "$DMG_URL"
+# DMG déjà téléchargé par l'app (mise à jour avec barre de progression), sinon on le télécharge
+if [ -n "${MIRORECAP_DMG:-}" ] && [ -f "$MIRORECAP_DMG" ]; then
+  mv "$MIRORECAP_DMG" "$TMP/MiroRecap.dmg"
+else
+  echo "⬇️  Téléchargement de MiroRecap…"
+  curl -fL --progress-bar -o "$TMP/MiroRecap.dmg" "$DMG_URL"
+fi
 
 echo "→ Installation…"
 mkdir -p "$TMP/vol"
@@ -36,5 +41,10 @@ xattr -dr com.apple.quarantine "$CIBLE" 2>/dev/null || true
 rm -rf "$HOME/Applications/MiroRecap.app" "$HOME/Applications/CompteRendu.app"
 rm -rf "$HOME/Library/Application Support/MiroRecap/.venv" "$HOME/Library/Application Support/MiroRecap/ui"
 
-open "$CIBLE"
+# Mise à jour automatique : relance discrète (barre des menus seulement)
+if [ "${MIRORECAP_DISCRET:-}" = "1" ]; then
+  open "$CIBLE" --args --demarrage
+else
+  open "$CIBLE"
+fi
 echo "✅ MiroRecap est installé dans Applications."

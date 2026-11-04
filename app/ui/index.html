@@ -416,7 +416,10 @@
 <main>
   <div id="bandeau-maj" class="bandeau maj" hidden>
     <svg class="icone" width="18" height="18"><use href="#i-fleche"/></svg>
-    <span id="maj-texte" class="texte"></span>
+    <div class="texte">
+      <div id="maj-texte"></div>
+      <div id="maj-progression" class="progression" hidden><span id="maj-barre"></span></div>
+    </div>
     <button id="maj-bouton" class="bouton principal">Mettre à jour</button>
   </div>
   <div id="bandeau-whisper" class="bandeau whisper" hidden>
@@ -554,6 +557,10 @@
           <div class="rang">
             <div class="corps" id="version-etat"></div>
             <button id="verifier-maj" class="bouton" type="button">Rechercher</button>
+          </div>
+          <div id="maj-auto" class="rang cliquable" role="switch" tabindex="0" aria-checked="true">
+            <div class="corps"><div>Installer automatiquement</div><div class="d">Dès qu'une version sort, quand MiroRecap n'enregistre pas</div></div>
+            <span class="interrupteur" aria-hidden="true"></span>
           </div>
         </div>
       </div>
@@ -769,14 +776,23 @@
     $("#alerte").hidden = e.cle_ok;
 
     $("#bandeau-maj").hidden = !e.maj;
-    $("#maj-texte").textContent = e.maj_en_cours
-      ? `Mise à jour vers la version ${e.maj}… MiroRecap va se relancer tout seul.`
-      : `MiroRecap ${e.maj} est disponible.`;
+    const mp = e.maj_progression || {};
+    let texteMaj = `MiroRecap ${e.maj} est disponible.`;
+    if (e.maj_en_cours && mp.phase === "telechargement") {
+      const pct = mp.total ? Math.min(100, Math.floor(100 * mp.fait / mp.total)) : 0;
+      texteMaj = `Téléchargement de MiroRecap ${e.maj} · ${pct} % (${Math.round(mp.fait / 1e6)} / ${Math.round(mp.total / 1e6)} Mo)`;
+      $("#maj-barre").style.width = pct + "%";
+    } else if (e.maj_en_cours) {
+      texteMaj = `Installation de MiroRecap ${e.maj}… l'app va se relancer toute seule.`;
+      $("#maj-barre").style.width = "100%";
+    }
+    $("#maj-texte").textContent = texteMaj;
+    $("#maj-progression").hidden = !e.maj_en_cours;
     $("#maj-bouton").hidden = e.maj_en_cours;
     $("#erreur-detail").textContent = e.derniere_erreur ? "Dernière erreur : " + e.derniere_erreur : "";
     $("#version-etat").innerHTML = e.maj
       ? `<div>Version ${esc(e.version)}</div><div class="d">La version ${esc(e.maj)} est disponible</div>`
-      : `<div>Version ${esc(e.version)}</div><div class="d">À jour · vérification toutes les 6 heures</div>`;
+      : `<div>Version ${esc(e.version)}</div><div class="d">À jour · vérification toutes les heures</div>`;
 
     // Un nouveau compte rendu vient d'arriver : on rafraîchit
     const cle = e.dernier ? e.dernier.projet + "/" + e.dernier.fichier : "";
@@ -1037,6 +1053,7 @@
         <span class="coche">${icone("i-coche", 15)}</span>
       </div>`).join("");
     $("#son-systeme").setAttribute("aria-checked", r.son_systeme);
+    $("#maj-auto").setAttribute("aria-checked", r.maj_auto);
     if (!r.son_systeme) $("#son-systeme-etat").textContent = "Désactivé · seul ton micro est enregistré";
     $("#dossier-actuel").textContent = r.dossier_actuel;
     $("#dossier").value = r.dossier_personnalise;
@@ -1140,8 +1157,20 @@
   });
 
   $("#maj-bouton").addEventListener("click", async () => {
-    try { await api("/api/maj", {}); message("Mise à jour lancée. Ça prend quelques minutes."); sonder(); }
+    try { await api("/api/maj", {}); message("Téléchargement de la mise à jour…"); sonder(); }
     catch (err) { message(err.message); }
+  });
+
+  async function basculerMajAuto() {
+    const actif = $("#maj-auto").getAttribute("aria-checked") !== "true";
+    try {
+      await api("/api/reglages", { maj_auto: actif });
+      $("#maj-auto").setAttribute("aria-checked", actif);
+    } catch (err) { message(err.message); }
+  }
+  $("#maj-auto").addEventListener("click", basculerMajAuto);
+  $("#maj-auto").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); basculerMajAuto(); }
   });
 
   $("#verifier-maj").addEventListener("click", async () => {

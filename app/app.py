@@ -52,7 +52,8 @@ URL_VERSION = f"https://api.github.com/repos/{DEPOT}/releases/latest"
 URL_INSTALL = f"https://raw.githubusercontent.com/{DEPOT}/main/install-distant.sh"
 _fichier_version = DOSSIER_CODE / "VERSION"
 VERSION = _fichier_version.read_text().strip() if _fichier_version.exists() else "0"
-INTERVALLE_VERIF = 6 * 3600  # vérifie toutes les 6 heures
+URL_DMG = f"https://github.com/{DEPOT}/releases/latest/download/MiroRecap.dmg"
+INTERVALLE_VERIF = 3600  # vérifie toutes les heures
 FICHIER_CONFIG = DOSSIER_APP / "config.json"
 ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
 
@@ -75,6 +76,8 @@ CONFIG_DEFAUT = {
     "langue": "fr",
     # Enregistre aussi le son qui sort du Mac (voix des interlocuteurs en visio)
     "son_systeme": True,
+    # Installe les mises à jour toute seule dès qu'elles sortent (quand l'app ne fait rien)
+    "maj_auto": True,
 }
 
 
@@ -1015,6 +1018,7 @@ def lire_reglages():
         "claude_connecte": bool(CONFIG.get("jeton_claude_code")),
         "connexion": CONNEXION,
         "son_systeme": CONFIG.get("son_systeme", True),
+        "maj_auto": CONFIG.get("maj_auto", True),
     }
 
 
@@ -1030,6 +1034,8 @@ def sauver_reglages(donnees):
         if change:
             sauver_config(CONFIG)
             preparer_modele_en_fond()   # télécharge tout de suite, pas au prochain appel
+    if isinstance(donnees.get("maj_auto"), bool):
+        CONFIG["maj_auto"] = donnees["maj_auto"]
     if isinstance(donnees.get("son_systeme"), bool):
         CONFIG["son_systeme"] = donnees["son_systeme"]
     if "dossier_sortie" in donnees and donnees["dossier_sortie"].strip() != CONFIG.get("dossier_sortie", ""):
@@ -1192,6 +1198,7 @@ class App(rumps.App):
         self.maj = None                  # numéro de la nouvelle version si disponible
         self.derniere_erreur = ""        # message de la dernière erreur de traitement
         self.maj_en_cours = False
+        self.maj_progression = {"phase": "", "fait": 0, "total": 0}   # téléchargement du DMG
         self._compteur = 0
 
         self.bouton = rumps.MenuItem("Démarrer l'enregistrement", callback=lambda _: self.basculer_enregistrement())
@@ -1228,6 +1235,11 @@ class App(rumps.App):
 
         threading.Thread(target=self.travailleur, daemon=True).start()
         threading.Thread(target=self.boucle_maj, daemon=True).start()
+        # Juste après une mise à jour : on l'annonce
+        precedente = CONFIG.pop("version_precedente", None)
+        if precedente and precedente != VERSION:
+            sauver_config(CONFIG)
+            notifier(f"MiroRecap {VERSION} est installé", "Mise à jour terminée, tout est prêt.")
         # Premier lancement : le modèle Whisper se télécharge tout de suite, en fond
         preparer_modele_en_fond()
         # L'UI de la barre de menus ne doit être modifiée que depuis le thread principal
@@ -1261,6 +1273,7 @@ class App(rumps.App):
             "version": VERSION,
             "maj": self.maj,
             "maj_en_cours": self.maj_en_cours,
+            "maj_progression": self.maj_progression,
             "derniere_erreur": self.derniere_erreur,
             "modele": MODELE,
             "son_systeme": SON_SYSTEME,
@@ -1273,14 +1286,27 @@ class App(rumps.App):
         v = derniere_version()
         if v and version_tuple(v) > version_tuple(VERSION):
             if self.maj != v:
-                notifier("Mise à jour disponible", f"MiroRecap {v} est sortie. 🎙 → Mettre à jour")
+                if not CONFIG.get("maj_auto", True):
+                    notifier("Mise à jour disponible", f"MiroRecap {v} est sortie. 🎙 → Mettre à jour")
             self.maj = v
         return self.maj
+
+    def occupee(self):
+        return self.enreg.actif or bool(self.statut) or not self.file_traitement.empty()
 
     def boucle_maj(self):
         time.sleep(30)  # laisse l'app démarrer tranquillement
         while True:
             self.verifier_maj_maintenant()
+            # Mise à jour automatique : on attend que l'app soit libre (vérifié toutes les 2 min)
+            while self.maj and CONFIG.get("maj_auto", True) and not self.maj_en_cours:
+                if not self.occupee():
+                    try:
+                        self.lancer_maj(automatique=True)
+                    except Exception as e:
+                        print(f"Mise à jour automatique : {e}", flush=True)
+                    break
+                time.sleep(120)
             time.sleep(INTERVALLE_VERIF)
 
     def clic_maj(self, _):
@@ -1295,25 +1321,61 @@ class App(rumps.App):
                     notifier("MiroRecap est à jour", f"Tu as la dernière version ({VERSION}).")
             threading.Thread(target=verifier, daemon=True).start()
 
-    def lancer_maj(self):
-        """Lance l'installateur en arrière-plan. Il arrête l'app, la met à jour
-        (clé, projets et comptes rendus conservés) puis la relance."""
+    def lancer_maj(self, automatique=False):
+        """Télécharge le DMG dans l'app (avec progression), puis lance l'installateur en
+        arrière-plan : il arrête l'app, la remplace (réglages, projets et comptes rendus
+        conservés) puis la relance."""
         if not self.maj:
             raise RuntimeError("aucune mise à jour disponible")
         if self.enreg.actif:
             raise RuntimeError("arrête d'abord l'enregistrement en cours")
         if self.statut or not self.file_traitement.empty():
             raise RuntimeError("attends la fin du traitement en cours")
+        if self.maj_en_cours:
+            return
         self.maj_en_cours = True
-        notifier("Mise à jour en cours", "MiroRecap va se relancer tout seul dans quelques minutes.")
+        self.maj_progression = {"phase": "telechargement", "fait": 0, "total": 0}
+        if not automatique:
+            notifier("Mise à jour en cours", f"Téléchargement de MiroRecap {self.maj}…")
+        threading.Thread(target=self._installer_maj, args=(automatique,), daemon=True).start()
+
+    def _installer_maj(self, automatique):
+        dossier = DOSSIER_APP / "maj"
+        dossier.mkdir(parents=True, exist_ok=True)
+        dmg = dossier / "MiroRecap.dmg"
+        try:
+            # 1. Téléchargement suivi (barre de progression dans la fenêtre et la barre des menus)
+            with urllib.request.urlopen(URL_DMG, timeout=60) as reponse, open(dmg, "wb") as fichier:
+                self.maj_progression["total"] = int(reponse.headers.get("Content-Length") or 0)
+                while True:
+                    bloc = reponse.read(1 << 20)
+                    if not bloc:
+                        break
+                    fichier.write(bloc)
+                    self.maj_progression["fait"] += len(bloc)
+            if dmg.stat().st_size < 50_000_000:
+                raise RuntimeError("fichier téléchargé incomplet")
+        except Exception as e:
+            self.maj_en_cours = False
+            self.maj_progression = {"phase": "", "fait": 0, "total": 0}
+            dmg.unlink(missing_ok=True)
+            notifier("Mise à jour impossible pour l'instant", str(e))
+            return
+
+        # 2. Installation : l'installateur arrête l'app, la remplace et la relance
+        self.maj_progression["phase"] = "installation"
+        CONFIG["version_precedente"] = VERSION   # pour annoncer la nouveauté au redémarrage
+        sauver_config(CONFIG)
+        env = dict(os.environ, MIRORECAP_DMG=str(dmg))
+        if automatique:
+            env["MIRORECAP_DISCRET"] = "1"   # relance sans ouvrir la fenêtre
         journal = open(DOSSIER_APP / "maj.log", "w")
         # Session séparée : l'installateur survit à l'arrêt de l'app.
         # Si l'installation échoue, on relance au moins l'app existante.
         subprocess.Popen(
-            ["/bin/bash", "-c",
-             f'curl -fsSL "{URL_INSTALL}" | bash || open -a MiroRecap'],
+            ["/bin/bash", "-c", f'curl -fsSL "{URL_INSTALL}" | bash || open -a MiroRecap'],
             stdin=subprocess.DEVNULL, stdout=journal, stderr=subprocess.STDOUT,
-            start_new_session=True,
+            start_new_session=True, env=env,
         )
 
     def basculer_enregistrement(self):
@@ -1351,7 +1413,14 @@ class App(rumps.App):
             self.item_dernier.title = f"Dernier : {self.dernier['projet']} / {self.dernier['titre']}"
 
         if self.maj_en_cours:
-            self.item_maj.title = "Mise à jour en cours…"
+            mp = self.maj_progression
+            if mp["phase"] == "telechargement" and mp["total"]:
+                pct = int(100 * mp["fait"] / mp["total"])
+                self.item_maj.title = f"Téléchargement de la mise à jour… {pct} %"
+                if not self.enreg.actif and not self.statut:
+                    self.title = f"⬇ {pct} %"
+            else:
+                self.item_maj.title = "Installation de la mise à jour…"
         elif self.maj:
             self.item_maj.title = f"Mettre à jour vers la version {self.maj}"
 
