@@ -486,8 +486,17 @@
             <button id="cc-connecter" class="bouton principal" type="button">Se connecter</button>
             <button id="cc-deconnecter" class="bouton" type="button">Déconnecter</button>
           </div>
+          <form id="form-code" class="rang" hidden>
+            <input id="cc-code" class="champ" type="text" placeholder="Colle le code affiché dans le navigateur" autocomplete="off" spellcheck="false" aria-label="Code de connexion">
+            <button class="bouton principal" type="submit">Valider</button>
+          </form>
+          <div id="cc-aide" class="rang" hidden>
+            <div class="corps"><div class="d">Le navigateur ne s'est pas ouvert ?</div></div>
+            <button id="cc-ouvrir" class="bouton" type="button">Ouvrir la page</button>
+            <button id="cc-annuler" class="bouton" type="button">Annuler</button>
+          </div>
         </div>
-        <p class="note">Avec ton abonnement Claude (Pro ou Max), MiroRecap passe par Claude Code : pas de clé API, l'analyse compte dans les limites de ton abonnement. Clique sur Se connecter : le navigateur s'ouvre, tu te connectes à ton compte Claude, et c'est tout (connexion valable un an).</p>
+        <p class="note">Avec ton abonnement Claude (Pro ou Max), MiroRecap passe par Claude Code : pas de clé API, l'analyse compte dans les limites de ton abonnement. Clique sur Se connecter : le navigateur s'ouvre, tu te connectes à ton compte Claude, puis tu copies le code affiché et tu le colles ici (connexion valable un an).</p>
 
         <div id="moteurs" class="groupe" role="radiogroup" aria-label="Moteur d'analyse" style="margin-top:14px"></div>
 
@@ -1002,6 +1011,10 @@
     else if (r.claude_connecte) { titre = "Abonnement Claude connecté"; detail = `Analyse actuelle : ${r.moteur_effectif ? libelles[r.moteur_effectif] : "aucune"}`; }
     else { titre = "Abonnement Claude non connecté"; detail = cx.etat === "echec" ? cx.message : (r.claude_code ? "Clique sur Se connecter, le navigateur va s'ouvrir" : "Claude Code s'installera tout seul à la connexion"); }
     $("#cc-etat").innerHTML = `<div>${esc(titre)}</div><div class="d">${esc(detail)}</div>`;
+    const attenteCode = cx.etat === "navigateur";
+    $("#form-code").hidden = !attenteCode;
+    $("#cc-aide").hidden = !attenteCode;
+    $("#cc-ouvrir").hidden = !cx.url;
     $("#cc-connecter").hidden = r.claude_connecte || enCours;
     $("#cc-deconnecter").hidden = !r.claude_connecte || enCours;
     // Pendant la connexion, on rafraîchit l'état toutes les 2 secondes
@@ -1085,8 +1098,22 @@
   });
   $("#cc-connecter").addEventListener("click", async () => {
     await api("/api/claude-code", { action: "connecter" });
-    message("Le navigateur va s'ouvrir : connecte-toi à ton compte Claude et autorise l'accès.");
+    message("Le navigateur va s'ouvrir : connecte-toi, autorise l'accès, puis copie le code affiché.");
     chargerReglages();
+  });
+  $("#form-code").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      await api("/api/claude-code", { action: "code", code: $("#cc-code").value });
+      $("#cc-code").value = "";
+      message("Code envoyé, vérification…");
+      chargerReglages();
+    } catch (err) { message(err.message); }
+  });
+  $("#cc-ouvrir").addEventListener("click", () => api("/api/claude-code", { action: "ouvrir" }));
+  $("#cc-annuler").addEventListener("click", async () => {
+    await api("/api/claude-code", { action: "annuler" });
+    setTimeout(chargerReglages, 600);
   });
   $("#cc-deconnecter").addEventListener("click", async () => {
     await api("/api/claude-code", { action: "deconnecter" });

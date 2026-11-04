@@ -489,7 +489,8 @@ def env_claude_code():
     return env
 
 
-CONNEXION = {"etat": "", "message": ""}   # suivi affiché dans les Réglages
+CONNEXION = {"etat": "", "message": "", "url": ""}   # suivi affiché dans les Réglages
+SESSION_CONNEXION = {"maitre": None, "proc": None}  # terminal de « claude setup-token » en cours
 
 
 def connecter_claude_code():
@@ -516,13 +517,15 @@ def connecter_claude_code():
                 if not claude:
                     raise RuntimeError("l'installation de Claude Code a échoué")
 
-            CONNEXION.update(etat="navigateur", message="Connecte-toi dans le navigateur qui vient de s'ouvrir…")
+            CONNEXION.update(etat="navigateur", url="",
+                             message="Connecte-toi dans le navigateur, puis colle ici le code affiché.")
             # setup-token veut un vrai terminal : on lui en donne un, large pour que le jeton ne soit pas coupé
             maitre, esclave = pty.openpty()
             fcntl.ioctl(esclave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 1000, 0, 0))
             proc = subprocess.Popen([claude, "setup-token"], stdin=esclave, stdout=esclave, stderr=esclave,
                                     env=env_claude_code(), close_fds=True, start_new_session=True)
             os.close(esclave)
+            SESSION_CONNEXION.update(maitre=maitre, proc=proc)
             sortie, fin = b"", time.time() + 900
             while time.time() < fin:
                 pret, _, _ = select.select([maitre], [], [], 1)
@@ -535,6 +538,18 @@ def connecter_claude_code():
                         break
                     sortie += bloc
                     texte = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sortie.decode(errors="ignore"))
+                    # Lien de connexion, au cas où le navigateur ne s'est pas ouvert tout seul
+                    lien = re.search(r"https://\S*oauth/authorize\S+", texte)
+                    if lien and not CONNEXION["url"]:
+                        CONNEXION["url"] = lien.group(0)
+                    # Code refusé : Claude Code propose « Press Enter to retry ». On relance
+                    # (nouvelle page de connexion) et on repart de zéro pour la suite.
+                    if "Press Enter to retry" in texte:
+                        os.write(maitre, b"\r")
+                        sortie = b""
+                        CONNEXION.update(url="", message="Code refusé ou expiré. Reconnecte-toi dans la page "
+                                                         "qui vient de s'ouvrir et colle le nouveau code.")
+                        continue
                     jeton = re.search(r"sk-ant-oat[0-9A-Za-z_\-]+", texte)
                     if jeton:
                         CONFIG["jeton_claude_code"] = jeton.group(0)
@@ -546,7 +561,11 @@ def connecter_claude_code():
                 elif proc.poll() is not None:
                     break
             proc.terminate()
+            SESSION_CONNEXION.update(maitre=None, proc=None)
             os.close(maitre)
+            if CONNEXION["etat"] == "annule":
+                CONNEXION.update(etat="", message="", url="")
+                return
             if CONNEXION["etat"] != "ok":
                 raise RuntimeError("connexion non terminée (fenêtre du navigateur fermée ou délai dépassé)")
         except Exception as e:
@@ -554,6 +573,27 @@ def connecter_claude_code():
             CONNEXION.update(etat="echec", message=f"Échec : {e}")
 
     threading.Thread(target=tache, daemon=True).start()
+
+
+def envoyer_code_claude(code):
+    """Transmet à « claude setup-token » le code affiché par le navigateur après la connexion."""
+    code = (code or "").strip()
+    maitre = SESSION_CONNEXION["maitre"]
+    if not code:
+        raise ValueError("colle le code affiché dans le navigateur")
+    if maitre is None:
+        raise ValueError("aucune connexion en cours, clique d'abord sur Se connecter")
+    os.write(maitre, code.encode() + b"\r")
+    CONNEXION["message"] = "Vérification du code…"
+
+
+def annuler_connexion_claude():
+    proc = SESSION_CONNEXION["proc"]
+    if proc and proc.poll() is None:
+        CONNEXION["etat"] = "annule"
+        proc.terminate()
+    else:
+        CONNEXION.update(etat="", message="", url="")
 
 
 def deconnecter_claude_code():
@@ -1084,6 +1124,16 @@ class Api(http.server.BaseHTTPRequestHandler):
             if self.path == "/api/claude-code":
                 if d.get("action") == "deconnecter":
                     deconnecter_claude_code()
+                elif d.get("action") == "code":
+                    try:
+                        envoyer_code_claude(d.get("code"))
+                    except ValueError as e:
+                        return self._json(400, {"erreur": str(e)})
+                elif d.get("action") == "annuler":
+                    annuler_connexion_claude()
+                elif d.get("action") == "ouvrir":
+                    if CONNEXION.get("url", "").startswith("https://"):
+                        subprocess.run(["open", CONNEXION["url"]], check=False)
                 else:
                     connecter_claude_code()
                 return self._json(200, lire_reglages())
