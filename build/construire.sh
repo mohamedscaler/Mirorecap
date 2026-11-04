@@ -68,6 +68,19 @@ cat > "$APP/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
+# 6 bis. Identité du Python embarqué : notifications au nom de MiroRecap (et non de l'Éditeur de script)
+cat > "$RES/python/bin/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>fr.mirorecap.app</string>
+  <key>CFBundleName</key><string>MiroRecap</string>
+  <key>CFBundleDisplayName</key><string>MiroRecap</string>
+</dict>
+</plist>
+EOF
+
 # 7. Nettoyage (caches Python, tests inutiles) puis signature ad hoc
 find "$RES/python" -name "__pycache__" -type d -prune -exec rm -rf {} +
 codesign --force --deep --sign - "$APP" || echo "⚠ signature ad hoc incomplète"

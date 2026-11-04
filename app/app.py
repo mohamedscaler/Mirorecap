@@ -111,7 +111,13 @@ for _d in (DOSSIER_IMPORT, DOSSIER_ENREG, DOSSIER_ERREURS, DOSSIER_SORTIE / PROJ
 # ---------------------------------------------------------------------------
 
 def notifier(titre, message):
-    """Notification macOS via osascript (fiable même hors app empaquetée)."""
+    """Notification macOS au nom de MiroRecap (un clic ouvre la fenêtre).
+    Repli sur osascript si le centre de notifications n'est pas disponible."""
+    try:
+        rumps.notification("MiroRecap", titre, message, sound=False)
+        return
+    except Exception:
+        pass
     def echapper(s):
         return s.replace("\\", "\\\\").replace('"', '\\"')
     subprocess.run(
@@ -688,6 +694,16 @@ class Api(http.server.BaseHTTPRequestHandler):
 # App barre de menus
 # ---------------------------------------------------------------------------
 
+@rumps.notifications
+def clic_notification(_info):
+    """Clic sur une notification de MiroRecap : ouvre la fenêtre."""
+    if APP:
+        APP.ouvrir_fenetre()
+
+
+APP = None
+
+
 class App(rumps.App):
     def __init__(self):
         super().__init__("MiroRecap", title="🎙", quit_button=None)
@@ -954,4 +970,5 @@ if __name__ == "__main__":
         NSApplication.sharedApplication().setActivationPolicy_(1)  # 1 = Accessory
     except Exception:
         pass
-    App().run()
+    APP = App()
+    APP.run()
