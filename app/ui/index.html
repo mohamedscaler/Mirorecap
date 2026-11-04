@@ -199,7 +199,10 @@
   .rangee[aria-current="true"] { background: var(--selection-liste); color: #fff; }
   .rangee[aria-current="true"] .m { color: rgba(255, 255, 255, .8); }
   /* Sélection multiple */
-  .entete-liste .droite { display: flex; align-items: baseline; gap: 10px; }
+  .entete-liste .droite { display: flex; align-items: baseline; gap: 10px; flex-shrink: 0; }
+  .entete-liste .ligne h1 { font-size: 21px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .entete-liste .ligne { gap: 8px; }
+  #filtre-actif { display: none; }   /* le nombre est déjà dans la barre latérale */
   .liste.selection .rangee { position: relative; padding-left: 38px; }
   .liste.selection .rangee::before {
     content: ""; position: absolute; left: 11px; top: 50%; width: 16px; height: 16px; margin-top: -9px;
@@ -291,6 +294,9 @@
   .rang.colonne label { font-weight: 500; font-size: 12px; }
   .contexte textarea, #accueil textarea { width: 100%; resize: vertical; font: inherit; color: inherit; background: var(--champ, rgba(128,128,128,.12)); border: 1px solid var(--separateur, rgba(128,128,128,.25)); border-radius: 8px; padding: 8px 10px; box-sizing: border-box; }
   .bouton.danger { color: var(--rouge, #FF453A); }
+  .bandeau.appel .pastille-rec { width: 10px; height: 10px; border-radius: 50%; background: var(--rouge); box-shadow: 0 0 0 4px rgba(255, 69, 58, .2); animation: battement 1.6s ease-in-out infinite; }
+  @keyframes battement { 50% { box-shadow: 0 0 0 7px rgba(255, 69, 58, .08); } }
+  @media (prefers-reduced-motion: reduce) { .bandeau.appel .pastille-rec { animation: none; } }
   .bouton.danger.confirmer { background: var(--rouge, #FF453A); color: #fff; }
   #fm-choix .rang { cursor: default; }
   #fm-choix .d { white-space: normal; overflow: visible; text-overflow: clip; }
@@ -464,6 +470,11 @@
       <div class="progression"><span id="whisper-barre"></span></div>
     </div>
   </div>
+  <div id="bandeau-appel" class="bandeau appel" hidden>
+    <span class="pastille-rec" aria-hidden="true"></span>
+    <span id="appel-texte" class="texte">Appel détecté</span>
+    <button id="appel-enregistrer" class="bouton principal" type="button">Enregistrer</button>
+  </div>
   <div id="alerte" class="bandeau" hidden>
     <svg class="icone" width="18" height="18"><use href="#i-alerte"/></svg>
     <span class="texte">Connecte ton abonnement Claude (ou une clé API) pour que tes enregistrements soient analysés.</span>
@@ -613,6 +624,10 @@
             <span class="interrupteur" aria-hidden="true"></span>
           </div>
         </div>
+        <p class="titre-groupe">Quand un appel commence</p>
+        <div id="detection" class="groupe" role="radiogroup" aria-label="Détection des appels"></div>
+        <p class="note">MiroRecap repère qu'un appel commence quand une autre app (Meet, Zoom, Teams, FaceTime, WhatsApp…) utilise le micro. En France, préviens toujours ton interlocuteur que tu enregistres.</p>
+
         <p class="note">Meet, Zoom, Teams, FaceTime… MiroRecap enregistre ton micro et le son qui sort du Mac, puis les mélange. Au premier enregistrement, macOS demande l'autorisation « Enregistrement de l'écran et audio système » : seul l'audio est gardé. Avec un casque, le son est plus propre.</p>
 
         <p class="titre-groupe">Stockage</p>
@@ -931,6 +946,11 @@
 
     $("#alerte").hidden = e.cle_ok;
 
+    // Appel en cours détecté (micro utilisé par une autre app)
+    const ap = e.appel_detecte;
+    $("#bandeau-appel").hidden = !ap;
+    if (ap) $("#appel-texte").textContent = ap.app ? `Appel en cours sur ${ap.app} · l'enregistrer ?` : "Appel en cours détecté · l'enregistrer ?";
+
     $("#bandeau-maj").hidden = !e.maj;
     const mp = e.maj_progression || {};
     let texteMaj = `MiroRecap ${e.maj} est disponible.`;
@@ -1096,7 +1116,8 @@
         </p>
         <div class="actions">
           <button class="bouton principal" id="copier-claude">Copier pour Claude</button>
-          ${/\n## Mail à envoyer\n/.test(texte) ? '<button class="bouton" id="copier-mail">Copier le mail</button>' : ""}
+          ${/\n## Mail à envoyer\n/.test(texte) ? '<button class="bouton" id="ouvrir-mail">Ouvrir dans Mail</button><button class="bouton" id="copier-mail">Copier le mail</button>' : ""}
+          ${/\n## Actions à faire\n/.test(texte) ? '<button class="bouton" id="vers-rappels">Ajouter à Rappels</button>' : ""}
           <button class="bouton" id="copier">Copier le compte rendu</button>
           <button class="bouton" id="finder">Afficher dans le Finder</button>
           ${aAudio ? '<button class="bouton danger" id="suppr-audio">Supprimer l\'audio</button>' : ""}
@@ -1147,6 +1168,16 @@
       selection = null;
       chargerRaccourcis(); chargerComptesRendus();
     });
+    if ($("#ouvrir-mail")) $("#ouvrir-mail").onclick = async () => {
+      try { await api("/api/mail", { projet: c.projet, fichier: c.fichier }); message("Mail ouvert : relis-le, complète ce qui est entre crochets et envoie."); }
+      catch (err) { message(err.message); }
+    };
+    if ($("#vers-rappels")) $("#vers-rappels").onclick = async () => {
+      try {
+        const r = await api("/api/rappels", { projet: c.projet, fichier: c.fichier });
+        message(`${r.ajoutees} action${r.ajoutees > 1 ? "s ajoutées" : " ajoutée"} dans Rappels (liste « MiroRecap »).`);
+      } catch (err) { message(err.message); }
+    };
     if ($("#copier-mail")) $("#copier-mail").onclick = async () => {
       const bloc = (texte.split(/\n## Mail à envoyer\n/)[1] || "").split(/\n## |\n---\n/)[0].trim();
       const objet = (bloc.match(/^\*\*Objet\*\* : (.*)$/m) || [])[1] || "";
@@ -1337,6 +1368,16 @@
         <div class="corps"><div>${esc(m.nom)}</div><div class="d">${esc(m.detail)} · ${esc(m.taille || "")}</div></div>
         <span class="coche">${icone("i-coche", 15)}</span>
       </div>`).join("");
+    const modesAppel = [
+      { id: "proposer", nom: "Me proposer d'enregistrer", detail: "Notification et bandeau, tu décides" },
+      { id: "auto", nom: "Enregistrer automatiquement", detail: "Démarre tout seul, tu arrêtes quand l'appel est fini" },
+      { id: "rien", nom: "Ne rien faire", detail: "Tu lances l'enregistrement toi-même" },
+    ];
+    $("#detection").innerHTML = modesAppel.map((m) => `
+      <div class="rang cliquable" role="radio" tabindex="0" data-detection="${m.id}" aria-checked="${m.id === r.detection_appels}">
+        <div class="corps"><div>${m.nom}</div><div class="d">${m.detail}</div></div>
+        <span class="coche">${icone("i-coche", 15)}</span>
+      </div>`).join("");
     const durees = [
       { j: 7, nom: "7 jours" }, { j: 30, nom: "30 jours" }, { j: 90, nom: "3 mois" }, { j: 0, nom: "Toujours" },
     ];
@@ -1482,9 +1523,26 @@
     } catch (err) { message(err.message); }
   });
 
+  $("#appel-enregistrer").addEventListener("click", async () => {
+    try { rendreEtat(await api("/api/enregistrement", {})); message("Enregistrement lancé. Pense à prévenir ton interlocuteur."); }
+    catch (err) { message(err.message); }
+  });
+
   $("#maj-bouton").addEventListener("click", async () => {
     try { await api("/api/maj", {}); message("Téléchargement de la mise à jour…"); sonder(); }
     catch (err) { message(err.message); }
+  });
+
+  async function choisirDetection(r) {
+    try {
+      await api("/api/reglages", { detection_appels: r.dataset.detection });
+      document.querySelectorAll("[data-detection]").forEach((x) => x.setAttribute("aria-checked", x === r));
+    } catch (err) { message(err.message); }
+  }
+  $("#detection").addEventListener("click", (ev) => { const r = ev.target.closest("[data-detection]"); if (r) choisirDetection(r); });
+  $("#detection").addEventListener("keydown", (ev) => {
+    const r = ev.target.closest("[data-detection]");
+    if (r && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); choisirDetection(r); }
   });
 
   async function choisirConservation(r) {

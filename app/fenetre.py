@@ -49,6 +49,7 @@ def apres_demarrage():
     try:
         from PyObjCTools import AppHelper
         AppHelper.callAfter(identite_macos)
+        AppHelper.callLater(0.4, mettre_au_premier_plan)   # une fois la fenêtre affichée
     except Exception:
         pass
     import threading
@@ -85,8 +86,38 @@ def intercepter_cmd_q():
         print(f"Cmd+Q : {e}", flush=True)
 
 
+def accepter_premier_clic():
+    """Sur macOS, un clic sur une fenêtre pas encore au premier plan sert d'abord à
+    l'activer : il fallait cliquer deux fois sur les boutons. La vue web accepte
+    désormais ce premier clic, comme les apps d'Apple."""
+    try:
+        import objc
+        from webview.platforms.cocoa import BrowserView
+
+        def acceptsFirstMouse_(self, evenement):
+            return True
+
+        objc.classAddMethods(BrowserView.WebKitHost, [
+            objc.selector(acceptsFirstMouse_, selector=b"acceptsFirstMouse:", signature=b"Z@:@")])
+    except Exception as e:
+        print(f"Premier clic : {e}", flush=True)
+
+
+def mettre_au_premier_plan():
+    try:
+        from AppKit import NSApplication, NSApplicationActivateIgnoringOtherApps, NSRunningApplication
+        NSRunningApplication.currentApplication().activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+        app = NSApplication.sharedApplication()
+        app.activateIgnoringOtherApps_(True)
+        for f in app.windows():
+            f.makeKeyAndOrderFront_(None)
+    except Exception:
+        pass
+
+
 identite_macos()
 intercepter_cmd_q()
+accepter_premier_clic()
 # Liquid Glass : la fenêtre laisse voir le bureau flouté derrière (vibrancy macOS),
 # l'interface pose ses panneaux de verre par-dessus.
 def couleur_fond():
