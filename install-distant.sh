@@ -31,6 +31,7 @@ hdiutil attach "$TMP/MiroRecap.dmg" -nobrowse -readonly -mountpoint "$TMP/vol" -
 # Arrête la version en cours (ancienne ou nouvelle)
 launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/fr.mirorecap.app.plist" 2>/dev/null || true
 pkill -f "MiroRecap/app.py|MiroRecap/fenetre.py|MiroRecap.app/Contents/Resources/app/" 2>/dev/null || true
+pkill -f "Resources/app/fenetre.py" 2>/dev/null || true   # fenêtre restée ouverte
 sleep 1
 
 rm -rf "$CIBLE"

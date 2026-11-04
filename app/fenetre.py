@@ -31,6 +31,18 @@ def identite_macos():
         pass
 
 
+def surveiller_app():
+    """Ferme la fenêtre si l'app principale s'arrête (mise à jour, Quitter) :
+    sinon elle resterait affichée, figée sur son dernier état."""
+    import os
+    import time
+    parent = os.getppid()
+    while True:
+        time.sleep(2)
+        if os.getppid() != parent:   # parent disparu : le système nous a rattachés à launchd
+            os._exit(0)
+
+
 def apres_demarrage():
     # pywebview peut réinitialiser l'icône au lancement : on la réapplique sur le fil principal
     try:
@@ -38,6 +50,8 @@ def apres_demarrage():
         AppHelper.callAfter(identite_macos)
     except Exception:
         pass
+    import threading
+    threading.Thread(target=surveiller_app, daemon=True).start()
 
 
 identite_macos()
