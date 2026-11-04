@@ -20,6 +20,7 @@ Un fichier description.txt dans un dossier projet aide Claude à mieux classer.
 import datetime as dt
 import http.server
 import json
+import os
 import queue
 import re
 import secrets
@@ -748,9 +749,16 @@ class App(rumps.App):
         self.timer = rumps.Timer(self.tic, 1)
         self.timer.start()
 
-        # Premier lancement (pas de clé) : on ouvre directement les réglages
+        # Clic sur l'icône de l'app alors qu'elle tourne : le lanceur envoie SIGUSR1
+        import signal
+        self.fenetre_demandee = False
+        signal.signal(signal.SIGUSR1, lambda *_: setattr(self, "fenetre_demandee", True))
+
+        # Premier lancement (rien de configuré) : réglages ; ouverture par l'utilisateur : fenêtre
         if moteur_effectif() is None:
             self.ouvrir_fenetre("reglages")
+        elif os.environ.get("MIRORECAP_FENETRE") == "1":
+            self.ouvrir_fenetre()
 
     # --- État partagé avec la fenêtre --------------------------------------
 
@@ -833,6 +841,10 @@ class App(rumps.App):
     # --- Barre de menus -------------------------------------------------------
 
     def tic(self, _):
+        if self.fenetre_demandee:
+            self.fenetre_demandee = False
+            self.ouvrir_fenetre()
+
         if self.enreg.actif:
             m, s = divmod(int((dt.datetime.now() - self.enreg.debut).total_seconds()), 60)
             self.title = f"🔴 {m:02d}:{s:02d}"
@@ -944,7 +956,7 @@ def preparer_installation():
 <dict>
   <key>Label</key><string>fr.mirorecap.app</string>
   <key>ProgramArguments</key>
-  <array><string>/usr/bin/open</string><string>-a</string><string>{bundle}</string></array>
+  <array><string>/usr/bin/open</string><string>-a</string><string>{bundle}</string><string>--args</string><string>--demarrage</string></array>
   <key>RunAtLoad</key><true/>
 </dict>
 </plist>
