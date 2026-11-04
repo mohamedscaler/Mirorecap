@@ -94,5 +94,10 @@ echo "Taille de l'app : ${TAILLE_MO} Mo"
 mkdir -p dist/dmg
 cp -R "$APP" dist/dmg/
 ln -s /Applications dist/dmg/Applications
-hdiutil create -volname "MiroRecap" -srcfolder dist/dmg -ov -format UDZO dist/MiroRecap.dmg
+# hdiutil échoue parfois sur les Mac de GitHub (« Resource busy ») : jusqu'à 5 essais
+for ESSAI in 1 2 3 4 5; do
+  if hdiutil create -volname "MiroRecap" -srcfolder dist/dmg -ov -format UDZO dist/MiroRecap.dmg; then break; fi
+  [ "$ESSAI" = 5 ] && { echo "❌ Création du DMG impossible"; exit 1; }
+  echo "hdiutil occupé, nouvel essai dans 10 s…"; sleep 10
+done
 du -h dist/MiroRecap.dmg
