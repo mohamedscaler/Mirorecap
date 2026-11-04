@@ -15,7 +15,9 @@ mkdir -p "$APP/Contents/MacOS" "$RES/app"
 # 1. Python autonome (python-build-standalone via uv), copié dans le bundle
 uv python install 3.12
 PY_SRC="$(dirname "$(dirname "$(uv python find 3.12)")")"
-cp -R "$PY_SRC" "$RES/python"
+PY_SRC="$(cd "$PY_SRC" && pwd -P)"     # uv utilise un dossier raccourci : on prend le vrai
+cp -R "$PY_SRC/" "$RES/python"
+[ -L "$RES/python" ] && { echo "❌ Python copié comme raccourci"; exit 1; }
 PY="$RES/python/bin/python3"
 rm -f "$RES"/python/lib/python3.*/EXTERNALLY-MANAGED   # autorise pip dans ce Python
 "$PY" -m ensurepip -q 2>/dev/null || true
@@ -26,8 +28,8 @@ rm -f "$RES"/python/lib/python3.*/EXTERNALLY-MANAGED   # autorise pip dans ce Py
 "$PY" -m pip install -q --no-cache-dir --no-deps mlx-whisper
 "$PY" - <<'EOF'
 # Vérifie que tout s'importe avant de livrer
-import rumps, sounddevice, soundfile, anthropic, webview, mlx.core, mlx_whisper
-print("✓ imports OK")
+import sys, rumps, sounddevice, soundfile, anthropic, webview, mlx.core, mlx_whisper
+print("✓ imports OK depuis", sys.prefix)
 EOF
 
 # 3. Code de l'app
@@ -69,6 +71,11 @@ EOF
 # 7. Nettoyage (caches Python, tests inutiles) puis signature ad hoc
 find "$RES/python" -name "__pycache__" -type d -prune -exec rm -rf {} +
 codesign --force --deep --sign - "$APP" || echo "⚠ signature ad hoc incomplète"
+
+# Contrôle : une app autonome pèse plusieurs centaines de Mo
+TAILLE_MO=$(du -sm "$APP" | cut -f1)
+echo "Taille de l'app : ${TAILLE_MO} Mo"
+[ "$TAILLE_MO" -gt 80 ] || { echo "❌ App trop légère, Python ou les modules manquent"; exit 1; }
 
 # 8. DMG : l'app + un raccourci vers Applications, à glisser
 mkdir -p dist/dmg
