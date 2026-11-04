@@ -87,6 +87,8 @@ CONFIG_DEFAUT = {
     "contexte_perso": "",
     "signature_mail": "",
     "accueil_fait": False,   # assistant de bienvenue terminé
+    # Quand un appel commence (micro utilisé par une autre app) : "proposer", "auto" ou "rien"
+    "detection_appels": "proposer",
     "modele_claude": "claude-sonnet-5-5",
     # Moteur d'analyse : "auto" (abonnement si Claude Code est installé, sinon clé API),
     # "abonnement" (Claude Code, compte Claude Pro/Max) ou "api" (clé API Anthropic)
@@ -367,12 +369,17 @@ def tester_micro():
     """Enregistre 1,5 s au micro (déclenche la demande d'autorisation la première fois)
     et dit si du son arrive."""
     try:
+        if Api.app:
+            Api.app.test_micro_en_cours = True
         frequence = int(sd.query_devices(kind="input")["default_samplerate"])
         audio = sd.rec(int(frequence * 1.5), samplerate=frequence, channels=1, dtype="float32")
         sd.wait()
         niveau = float(np.abs(audio).max()) if audio.size else 0.0
     except Exception as e:
         return {"ok": False, "message": f"Micro inaccessible : {e}"}
+    finally:
+        if Api.app:
+            threading.Timer(4, lambda: setattr(Api.app, "test_micro_en_cours", False)).start()
     if niveau < 0.0005:
         return {"ok": False, "message": "Aucun son reçu. Autorise MiroRecap dans Réglages Système → "
                                         "Confidentialité et sécurité → Microphone, puis réessaie."}
@@ -449,6 +456,122 @@ def mixer_pistes(micro, systeme):
                 somme[:len(xb)] += xb
                 sortie.write(np.clip(somme, -1.0, 1.0))
         shutil.move(str(mix), str(micro))
+
+
+# ---------------------------------------------------------------------------
+# Détection des appels : le micro est utilisé par une autre app (Meet, Zoom, Teams…)
+# ---------------------------------------------------------------------------
+
+APPS_VISIO = {
+    "us.zoom.xos": "Zoom", "com.microsoft.teams2": "Teams", "com.microsoft.teams": "Teams",
+    "com.apple.FaceTime": "FaceTime", "com.hnc.Discord": "Discord", "com.tinyspeck.slackmacgap": "Slack",
+    "net.whatsapp.WhatsApp": "WhatsApp", "desktop.WhatsApp": "WhatsApp", "com.cisco.webexmeetingsapp": "Webex",
+    "com.skype.skype": "Skype", "ru.keepcoder.Telegram": "Telegram", "com.google.Chrome": "Chrome",
+    "com.apple.Safari": "Safari", "company.thebrowser.Browser": "Arc", "com.brave.Browser": "Brave",
+    "org.mozilla.firefox": "Firefox", "com.microsoft.edgemac": "Edge",
+}
+NAVIGATEURS = {"Chrome", "Safari", "Arc", "Brave", "Firefox", "Edge"}
+
+
+def _fourcc(code):
+    return int.from_bytes(code.encode(), "big")
+
+
+def micro_utilise_ailleurs():
+    """True si le micro par défaut est en cours d'utilisation (par n'importe quelle app).
+    CoreAudio : kAudioDevicePropertyDeviceIsRunningSomewhere sur le micro par défaut."""
+    import ctypes
+    import ctypes.util
+
+    class Adresse(ctypes.Structure):
+        _fields_ = [("mSelector", ctypes.c_uint32), ("mScope", ctypes.c_uint32), ("mElement", ctypes.c_uint32)]
+
+    global _COREAUDIO
+    try:
+        _COREAUDIO
+    except NameError:
+        _COREAUDIO = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreAudio"))
+    lire = _COREAUDIO.AudioObjectGetPropertyData
+    lire.argtypes = [ctypes.c_uint32, ctypes.POINTER(Adresse), ctypes.c_uint32, ctypes.c_void_p,
+                     ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p]
+    lire.restype = ctypes.c_int32
+
+    glob = _fourcc("glob")
+    appareil = ctypes.c_uint32(0)
+    taille = ctypes.c_uint32(4)
+    if lire(1, ctypes.byref(Adresse(_fourcc("dIn "), glob, 0)), 0, None, ctypes.byref(taille), ctypes.byref(appareil)) != 0:
+        return False
+    actif = ctypes.c_uint32(0)
+    taille = ctypes.c_uint32(4)
+    if lire(appareil.value, ctypes.byref(Adresse(_fourcc("gone"), glob, 0)), 0, None, ctypes.byref(taille), ctypes.byref(actif)) != 0:
+        return False
+    return bool(actif.value)
+
+
+def app_de_visio():
+    """Nom de l'app de visio ouverte au premier plan (ou la plus probable), sinon None."""
+    try:
+        from AppKit import NSWorkspace
+        espace = NSWorkspace.sharedWorkspace()
+        devant = espace.frontmostApplication()
+        ouvertes = [str(a.bundleIdentifier() or "") for a in espace.runningApplications()]
+        if devant and str(devant.bundleIdentifier() or "") in APPS_VISIO:
+            nom = APPS_VISIO[str(devant.bundleIdentifier())]
+            if nom not in NAVIGATEURS:
+                return nom
+        dediees = [APPS_VISIO[b] for b in ouvertes if b in APPS_VISIO and APPS_VISIO[b] not in NAVIGATEURS]
+        return dediees[0] if dediees else None
+    except Exception:
+        return None
+
+
+class DetecteurAppels:
+    """Surveille le micro toutes les 3 s. Un appel est « détecté » quand une autre app utilise
+    le micro depuis au moins 6 s (on ignore les usages très brefs : dictée, Siri…)."""
+
+    def __init__(self, app):
+        self.app = app
+        self.depuis = None          # début de l'utilisation du micro par une autre app
+        self.propose = False        # proposition déjà faite pour cet appel
+        self.appel = None           # {"app": nom, "debut": iso} pendant un appel détecté
+        threading.Thread(target=self.boucle, daemon=True).start()
+
+    def boucle(self):
+        time.sleep(15)
+        while True:
+            try:
+                self.verifier()
+            except Exception as e:
+                print(f"Détection des appels : {e}", flush=True)
+                time.sleep(60)
+            time.sleep(3)
+
+    def verifier(self):
+        mode = CONFIG.get("detection_appels", "proposer")
+        # Pendant notre propre enregistrement ou un test, le micro est utilisé par nous : on ne sait pas
+        if self.app.enreg.actif:
+            self.propose = True   # appel déjà enregistré : pas de nouvelle proposition après l'arrêt
+            return
+        if mode == "rien" or getattr(self.app, "test_micro_en_cours", False):
+            self.depuis, self.appel = None, None
+            return
+        if not micro_utilise_ailleurs():
+            self.depuis, self.propose, self.appel = None, False, None
+            return
+        if self.depuis is None:
+            self.depuis = time.time()
+            return
+        if self.propose or time.time() - self.depuis < 6:
+            return
+        self.propose = True
+        nom = app_de_visio()
+        self.appel = {"app": nom or "", "debut": dt.datetime.now().isoformat(timespec="seconds")}
+        if mode == "auto":
+            self.app.basculer_enregistrement()
+            notifier("Enregistrement lancé", f"Appel détecté{' sur ' + nom if nom else ''}. Pense à prévenir ton interlocuteur.")
+        else:
+            notifier(f"Appel détecté{' sur ' + nom if nom else ''}",
+                     "Clique ici puis sur Enregistrer pour en faire un compte rendu.")
 
 
 # ---------------------------------------------------------------------------
@@ -1409,6 +1532,78 @@ def nettoyer_audios():
     return supprimes
 
 
+def extraire_mail(texte):
+    """(destinataire, objet, corps) de la section « Mail à envoyer », ou None."""
+    bloc = re.search(r"^## Mail à envoyer\s*\n(.*?)(?=^## |\n---\n|\Z)", texte, flags=re.M | re.S)
+    if not bloc:
+        return None
+    contenu = bloc.group(1).strip()
+    a = re.search(r"^\*\*À\*\* : (.*)$", contenu, flags=re.M)
+    objet = re.search(r"^\*\*Objet\*\* : (.*)$", contenu, flags=re.M)
+    corps = re.sub(r"^\*\*(À|Objet)\*\* : .*\n?", "", contenu, flags=re.M).strip()
+    return (a.group(1).strip() if a else "", objet.group(1).strip() if objet else "", corps)
+
+
+def ouvrir_dans_mail(projet, fichier):
+    """Ouvre un nouveau message dans l'app Mail (ou la messagerie par défaut), prérempli."""
+    md = chemin_compte_rendu(projet, fichier)
+    mail = extraire_mail(md.read_text(encoding="utf-8"))
+    if not mail:
+        raise ValueError("pas de mail préparé dans ce compte rendu")
+    destinataire, objet, corps = mail
+    adresse = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", destinataire)
+    lien = "mailto:" + (adresse.group(0) if adresse else "") + "?" + urllib.parse.urlencode(
+        {"subject": objet, "body": corps}, quote_via=urllib.parse.quote)
+    subprocess.run(["open", lien], check=False)
+    return {"ok": True}
+
+
+def extraire_actions(texte):
+    """Lignes de la section « Actions à faire » (puces), sans le texte d'aide."""
+    bloc = re.search(r"^## Actions à faire\s*\n(.*?)(?=^## |\n---\n|\Z)", texte, flags=re.M | re.S)
+    if not bloc:
+        return []
+    actions = []
+    for ligne in bloc.group(1).splitlines():
+        m = re.match(r"^\s*(?:[-*•]|\d+[.)])\s+(?:\[ \]\s*)?(.+)$", ligne)
+        if m:
+            actions.append(re.sub(r"\*\*(.+?)\*\*", r"\1", m.group(1)).strip())
+    return actions
+
+
+SCRIPT_RAPPELS = """on run argv
+    set nomListe to item 1 of argv
+    set note to item 2 of argv
+    tell application "Reminders"
+        if not (exists list nomListe) then make new list with properties {name:nomListe}
+        repeat with i from 3 to count of argv
+            make new reminder in list nomListe with properties {name:(item i of argv), body:note}
+        end repeat
+    end tell
+end run"""
+
+
+def actions_vers_rappels(projet, fichier):
+    """Ajoute les actions d'un compte rendu dans Rappels (liste « MiroRecap », synchronisée
+    avec l'iPhone). Le texte passe en arguments séparés : aucun risque d'injection."""
+    md = chemin_compte_rendu(projet, fichier)
+    texte = md.read_text(encoding="utf-8")
+    actions = extraire_actions(texte)
+    if not actions:
+        raise ValueError("aucune action à faire dans ce compte rendu")
+    premiere = texte.split("\n", 1)[0].lstrip("# ").strip()
+    note = f"{projet} · {premiere}"
+    r = subprocess.run(["osascript", "-e", SCRIPT_RAPPELS, "MiroRecap", note, *actions],
+                       capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        erreur = r.stderr.strip()
+        if "-1743" in erreur or "not allowed" in erreur.lower() or "autoris" in erreur.lower():
+            raise ValueError("autorise MiroRecap à utiliser Rappels : Réglages Système → Confidentialité et "
+                             "sécurité → Automatisation (ou Rappels), puis réessaie")
+        raise ValueError(f"Rappels : {erreur or 'erreur inconnue'}")
+    return {"ok": True, "ajoutees": len(actions)}
+
+
 def lire_compte_rendu(projet, fichier):
     chemin = chemin_compte_rendu(projet, fichier)
     return {"markdown": chemin.read_text(encoding="utf-8"),
@@ -1586,6 +1781,7 @@ def lire_reglages():
         "accueil_fait": bool(CONFIG.get("accueil_fait")),
         "modele_choisi": bool(CONFIG.get("modele_choisi")),
         "mcp_installe": mcp_installe(),
+        "detection_appels": CONFIG.get("detection_appels", "proposer"),
     }
 
 
@@ -1610,6 +1806,8 @@ def sauver_reglages(donnees):
         if change or premier:
             sauver_config(CONFIG)
             preparer_modele_en_fond()   # télécharge tout de suite, pas au prochain appel
+    if donnees.get("detection_appels") in ("proposer", "auto", "rien"):
+        CONFIG["detection_appels"] = donnees["detection_appels"]
     if donnees.get("conservation_audio") in (0, 7, 30, 90):
         CONFIG["conservation_audio"] = donnees["conservation_audio"]
         sauver_config(CONFIG)
@@ -1714,6 +1912,10 @@ class Api(http.server.BaseHTTPRequestHandler):
                 return self._json(200, tester_micro())
             if self.path == "/api/test-son":
                 return self._json(200, tester_son_systeme())
+            if self.path == "/api/mail":
+                return self._json(200, ouvrir_dans_mail(d.get("projet", ""), d.get("fichier", "")))
+            if self.path == "/api/rappels":
+                return self._json(200, actions_vers_rappels(d.get("projet", ""), d.get("fichier", "")))
             if self.path == "/api/mcp":
                 (deconnecter_mcp if d.get("action") == "deconnecter" else connecter_mcp)()
                 return self._json(200, lire_reglages())
@@ -1851,6 +2053,7 @@ class App(rumps.App):
         threading.Thread(target=self.travailleur, daemon=True).start()
         threading.Thread(target=self.boucle_maj, daemon=True).start()
         threading.Thread(target=self.boucle_nettoyage, daemon=True).start()
+        self.detecteur = DetecteurAppels(self)
         # Code téléchargé lancé avec succès : le démarreur ne le comptera pas comme raté
         if DOSSIER_CODE != CODE_APP:
             threading.Timer(10, lambda: (DOSSIER_CODE / ".essais").unlink(missing_ok=True)).start()
@@ -1916,6 +2119,7 @@ class App(rumps.App):
             "modele": MODELE,
             "choix_modele": not CONFIG.get("modele_choisi"),
             "accueil": not CONFIG.get("accueil_fait"),
+            "appel_detecte": (self.detecteur.appel if getattr(self, "detecteur", None) and not self.enreg.actif else None),
             "son_systeme": SON_SYSTEME,
         }
 
@@ -2168,7 +2372,9 @@ class App(rumps.App):
                 self.title = f"⏳ {self.statut}"
             else:
                 self.title = "🎙"
-            self.bouton.title = "Démarrer l'enregistrement"
+            appel = getattr(self, "detecteur", None) and self.detecteur.appel
+            self.bouton.title = (f"Enregistrer l'appel {appel['app']}" if appel and appel["app"]
+                                 else "Enregistrer cet appel" if appel else "Démarrer l'enregistrement")
 
         if self.dernier:
             self.item_dernier.title = f"Dernier : {self.dernier['projet']} / {self.dernier['titre']}"
