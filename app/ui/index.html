@@ -374,11 +374,11 @@
           <div class="rang">
             <span id="cc-point" class="point"></span>
             <div class="corps" id="cc-etat"></div>
-            <button id="cc-installer" class="bouton principal" type="button">Installer et connecter</button>
-            <button id="cc-connecter" class="bouton" type="button">Se connecter</button>
+            <button id="cc-connecter" class="bouton principal" type="button">Se connecter</button>
+            <button id="cc-deconnecter" class="bouton" type="button">Déconnecter</button>
           </div>
         </div>
-        <p class="note">Avec ton abonnement Claude (Pro ou Max), MiroRecap passe par Claude Code : pas de clé API, l'analyse compte dans les limites de ton abonnement. La connexion se fait une fois dans le Terminal, en choisissant « Claude account ».</p>
+        <p class="note">Avec ton abonnement Claude (Pro ou Max), MiroRecap passe par Claude Code : pas de clé API, l'analyse compte dans les limites de ton abonnement. Clique sur Se connecter : le navigateur s'ouvre, tu te connectes à ton compte Claude, et c'est tout (connexion valable un an).</p>
 
         <div id="moteurs" class="groupe" role="radiogroup" aria-label="Moteur d'analyse" style="margin-top:14px"></div>
 
@@ -771,12 +771,19 @@
       : `<div>Aucune clé</div><div class="d">Pas nécessaire si tu utilises ton abonnement Claude</div>`;
     // Moteur d'analyse
     const libelles = { abonnement: "abonnement Claude", api: "clé API" };
-    $("#cc-point").classList.toggle("ok", !!r.claude_code);
-    $("#cc-etat").innerHTML = r.claude_code
-      ? `<div>Claude Code installé</div><div class="d">Analyse actuelle : ${r.moteur_effectif ? libelles[r.moteur_effectif] : "aucune, rien n'est configuré"}</div>`
-      : `<div>Claude Code n'est pas installé</div><div class="d">Nécessaire pour utiliser ton abonnement Claude</div>`;
-    $("#cc-installer").hidden = !!r.claude_code;
-    $("#cc-connecter").hidden = !r.claude_code;
+    const cx = r.connexion || {};
+    const enCours = cx.etat === "installation" || cx.etat === "navigateur";
+    $("#cc-point").classList.toggle("ok", r.claude_connecte);
+    let titre, detail;
+    if (enCours) { titre = cx.etat === "installation" ? "Installation de Claude Code…" : "Connexion en cours…"; detail = cx.message; }
+    else if (r.claude_connecte) { titre = "Abonnement Claude connecté"; detail = `Analyse actuelle : ${r.moteur_effectif ? libelles[r.moteur_effectif] : "aucune"}`; }
+    else { titre = "Abonnement Claude non connecté"; detail = cx.etat === "echec" ? cx.message : (r.claude_code ? "Clique sur Se connecter, le navigateur va s'ouvrir" : "Claude Code s'installera tout seul à la connexion"); }
+    $("#cc-etat").innerHTML = `<div>${esc(titre)}</div><div class="d">${esc(detail)}</div>`;
+    $("#cc-connecter").hidden = r.claude_connecte || enCours;
+    $("#cc-deconnecter").hidden = !r.claude_connecte || enCours;
+    // Pendant la connexion, on rafraîchit l'état toutes les 2 secondes
+    clearTimeout(window.suiviConnexion);
+    if (enCours) window.suiviConnexion = setTimeout(() => { if (!$("#vue-reglages").hidden) chargerReglages(); }, 2000);
     const moteurs = [
       { id: "auto", nom: "Automatique", detail: "Abonnement Claude s'il est installé, sinon clé API" },
       { id: "abonnement", nom: "Abonnement Claude", detail: "Via Claude Code, inclus dans Pro et Max" },
@@ -838,15 +845,17 @@
     const r = ev.target.closest("[data-moteur]");
     if (r && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); choisirMoteur(r); }
   });
-  $("#cc-installer").addEventListener("click", async () => {
-    await api("/api/claude-code", { action: "installer" });
-    message("Le Terminal s'ouvre : laisse l'installation finir, puis choisis « Claude account » pour te connecter.");
-  });
   $("#cc-connecter").addEventListener("click", async () => {
     await api("/api/claude-code", { action: "connecter" });
-    message("Le Terminal s'ouvre : tape /login, choisis « Claude account », puis /exit une fois connecté.");
+    message("Le navigateur va s'ouvrir : connecte-toi à ton compte Claude et autorise l'accès.");
+    chargerReglages();
   });
-  // Après une installation dans le Terminal, on rafraîchit l'état quand on revient sur la fenêtre
+  $("#cc-deconnecter").addEventListener("click", async () => {
+    await api("/api/claude-code", { action: "deconnecter" });
+    message("Abonnement Claude déconnecté.");
+    chargerReglages(); sonder();
+  });
+  // Au retour sur la fenêtre (après la connexion dans le navigateur), on rafraîchit l'état
   window.addEventListener("focus", () => { if (!$("#vue-reglages").hidden) chargerReglages(); });
 
   $("#form-dossier").addEventListener("submit", async (ev) => {

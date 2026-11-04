@@ -313,16 +313,101 @@ def trouver_claude_code():
     return None
 
 
+def env_claude_code():
+    """Environnement pour Claude Code : le jeton de l'abonnement si MiroRecap l'a obtenu."""
+    env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)  # sinon Claude Code utiliserait une clé API à la place de l'abonnement
+    if CONFIG.get("jeton_claude_code"):
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = CONFIG["jeton_claude_code"]
+    return env
+
+
+CONNEXION = {"etat": "", "message": ""}   # suivi affiché dans les Réglages
+
+
+def connecter_claude_code():
+    """Installe Claude Code si besoin, puis lance « claude setup-token » : le navigateur
+    s'ouvre, l'utilisateur se connecte avec son compte Claude, et MiroRecap récupère le
+    jeton (valable un an) sans passer par le Terminal."""
+    import fcntl
+    import pty
+    import select
+    import struct
+    import termios
+
+    if CONNEXION["etat"] in ("installation", "navigateur"):
+        return  # déjà en cours
+
+    def tache():
+        try:
+            claude = trouver_claude_code()
+            if not claude:
+                CONNEXION.update(etat="installation", message="Installation de Claude Code…")
+                subprocess.run(["/bin/bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
+                               capture_output=True, text=True, timeout=900)
+                claude = trouver_claude_code()
+                if not claude:
+                    raise RuntimeError("l'installation de Claude Code a échoué")
+
+            CONNEXION.update(etat="navigateur", message="Connecte-toi dans le navigateur qui vient de s'ouvrir…")
+            # setup-token veut un vrai terminal : on lui en donne un, large pour que le jeton ne soit pas coupé
+            maitre, esclave = pty.openpty()
+            fcntl.ioctl(esclave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 1000, 0, 0))
+            proc = subprocess.Popen([claude, "setup-token"], stdin=esclave, stdout=esclave, stderr=esclave,
+                                    env=env_claude_code(), close_fds=True, start_new_session=True)
+            os.close(esclave)
+            sortie, fin = b"", time.time() + 900
+            while time.time() < fin:
+                pret, _, _ = select.select([maitre], [], [], 1)
+                if pret:
+                    try:
+                        bloc = os.read(maitre, 4096)
+                    except OSError:
+                        break
+                    if not bloc:
+                        break
+                    sortie += bloc
+                    texte = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sortie.decode(errors="ignore"))
+                    jeton = re.search(r"sk-ant-oat[0-9A-Za-z_\-]+", texte)
+                    if jeton:
+                        CONFIG["jeton_claude_code"] = jeton.group(0)
+                        sauver_config(CONFIG)
+                        FICHIER_CONFIG.chmod(0o600)
+                        CONNEXION.update(etat="ok", message="Connecté à ton abonnement Claude.")
+                        notifier("Abonnement Claude connecté", "MiroRecap utilise maintenant ton abonnement.")
+                        break
+                elif proc.poll() is not None:
+                    break
+            proc.terminate()
+            os.close(maitre)
+            if CONNEXION["etat"] != "ok":
+                raise RuntimeError("connexion non terminée (fenêtre du navigateur fermée ou délai dépassé)")
+        except Exception as e:
+            print(f"Connexion Claude Code : {e}", flush=True)
+            CONNEXION.update(etat="echec", message=f"Échec : {e}")
+
+    threading.Thread(target=tache, daemon=True).start()
+
+
+def deconnecter_claude_code():
+    CONFIG.pop("jeton_claude_code", None)
+    sauver_config(CONFIG)
+    CONNEXION.update(etat="", message="")
+
+
 def moteur_effectif():
     """Moteur réellement utilisé : 'abonnement', 'api', ou None si aucun n'est prêt."""
     choix = CONFIG.get("moteur", "auto")
     claude = trouver_claude_code()
     cle = CONFIG.get("cle_api_anthropic")
+    connecte = bool(claude and CONFIG.get("jeton_claude_code"))
     if choix == "abonnement":
         return "abonnement" if claude else None
     if choix == "api":
         return "api" if cle else None
-    return "abonnement" if claude else ("api" if cle else None)
+    if connecte:
+        return "abonnement"
+    return "api" if cle else ("abonnement" if claude else None)
 
 
 def instructions_analyse(noms, projets):
@@ -401,6 +486,7 @@ def analyser_abonnement(systeme, contenu):
              "--output-format", "json", "--model", CONFIG.get("modele_abonnement", "sonnet"),
              "--max-turns", "1"],
             input=consigne, capture_output=True, text=True, timeout=900, cwd=dossier_vide,
+            env=env_claude_code(),
         )
     sortie = r.stdout.strip()
     if r.returncode != 0 and not sortie:
@@ -571,6 +657,8 @@ def lire_reglages():
         "moteur": CONFIG.get("moteur", "auto"),
         "moteur_effectif": moteur_effectif(),
         "claude_code": trouver_claude_code(),
+        "claude_connecte": bool(CONFIG.get("jeton_claude_code")),
+        "connexion": CONNEXION,
     }
 
 
@@ -674,12 +762,11 @@ class Api(http.server.BaseHTTPRequestHandler):
             if self.path == "/api/erreurs/relancer":
                 return self._json(200, {"relances": relancer_erreurs()})
             if self.path == "/api/claude-code":
-                if d.get("action") == "installer":
-                    # Installateur officiel, puis lancement de claude pour la connexion au compte
-                    ouvrir_terminal("curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude")
+                if d.get("action") == "deconnecter":
+                    deconnecter_claude_code()
                 else:
-                    ouvrir_terminal(f"{trouver_claude_code() or 'claude'}")
-                return self._json(200, {"ok": True})
+                    connecter_claude_code()
+                return self._json(200, lire_reglages())
             if self.path == "/api/maj/verifier":
                 self.app.verifier_maj_maintenant()
                 return self._json(200, self.app.etat())
