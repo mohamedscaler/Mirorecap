@@ -30,8 +30,19 @@ hdiutil attach "$TMP/MiroRecap.dmg" -nobrowse -readonly -mountpoint "$TMP/vol" -
 
 # Arrête la version en cours (ancienne ou nouvelle)
 launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/fr.mirorecap.app.plist" 2>/dev/null || true
-pkill -f "MiroRecap/app.py|MiroRecap/fenetre.py|MiroRecap.app/Contents/Resources/app/" 2>/dev/null || true
-pkill -f "Resources/app/fenetre.py" 2>/dev/null || true   # fenêtre restée ouverte
+# Tout ce qui tourne depuis le bundle : lanceur, Python (moteur + fenêtre), capture du son
+arreter_app() {
+  pkill "$1" -f "MiroRecap.app/Contents/" 2>/dev/null || true
+  pkill "$1" -f "Resources/app/(app|fenetre)\.py" 2>/dev/null || true
+  pkill "$1" -f "MiroRecap/(app|fenetre)\.py" 2>/dev/null || true   # très anciennes versions
+  pkill "$1" -x MiroRecap 2>/dev/null || true
+}
+arreter_app -TERM
+for _ in 1 2 3 4 5; do
+  pgrep -f "MiroRecap.app/Contents/|Resources/app/(app|fenetre)\.py" >/dev/null || break
+  sleep 1
+done
+arreter_app -KILL   # ce qui refuse de s'arrêter
 sleep 1
 
 rm -rf "$CIBLE"
