@@ -262,6 +262,12 @@
   dialog label { font-weight: 500; margin-top: 4px; }
   dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
   dialog .supprimer-info { color: var(--second); font-size: 11px; }
+  #feuille-modele { width: 460px; }
+  #fm-choix .rang { cursor: default; }
+  #fm-choix .d { white-space: normal; overflow: visible; text-overflow: clip; }
+  #fm-choix .taille { color: var(--second); font-weight: 400; font-size: 11px; margin-left: 6px; }
+  #fm-choix .rang:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--bleu); }
+  #fm-choix .badge { font-size: 10px; font-weight: 600; color: #fff; background: var(--bleu); border-radius: 6px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px; }
 
   /* Message flottant */
   .message {
@@ -583,6 +589,18 @@
   </form>
 </dialog>
 
+<!-- Premier lancement : choix du modèle de transcription -->
+<dialog id="feuille-modele" aria-labelledby="fm-titre">
+  <form id="form-modele" method="dialog">
+    <h2 id="fm-titre">Choisis ta transcription</h2>
+    <p class="d" style="margin:0 0 4px">Whisper transcrit tes appels directement sur ton Mac, l'audio ne sort pas de ta machine. Le modèle se télécharge une seule fois. Tu pourras en changer dans les Réglages.</p>
+    <div id="fm-choix" class="groupe" role="radiogroup" aria-label="Modèle de transcription"></div>
+    <div class="actions">
+      <button class="bouton principal" type="submit" id="fm-valider">Installer</button>
+    </div>
+  </form>
+</dialog>
+
 <p id="message" class="message" role="status"></p>
 
 <script>
@@ -747,6 +765,9 @@
     else if (e.statut) statut = e.statut + (e.en_attente ? ` · ${e.en_attente} en attente` : "");
     if (e.erreurs && !e.enregistrement) statut += ` · ${pluriel(e.erreurs, "erreur")}`;
     $("#statut").textContent = statut;
+
+    // Premier lancement : choix du modèle
+    if (e.choix_modele && !$("#feuille-modele").open && choixModele === null) ouvrirChoixModele();
 
     // Téléchargement du modèle Whisper
     const md = e.modele || {};
@@ -1053,7 +1074,7 @@
 
     $("#modeles").innerHTML = r.modeles.map((m) => `
       <div class="rang cliquable" role="radio" tabindex="0" data-modele="${esc(m.id)}" aria-checked="${m.id === r.modele_whisper}">
-        <div class="corps"><div>${esc(m.nom)}</div><div class="d">${esc(m.detail)}</div></div>
+        <div class="corps"><div>${esc(m.nom)}</div><div class="d">${esc(m.detail)} · ${esc(m.taille || "")}</div></div>
         <span class="coche">${icone("i-coche", 15)}</span>
       </div>`).join("");
     $("#son-systeme").setAttribute("aria-checked", r.son_systeme);
@@ -1182,6 +1203,43 @@
       const e = await api("/api/maj/verifier", {});
       rendreEtat(e);
       message(e.maj ? `Version ${e.maj} disponible.` : "Tu as la dernière version.");
+    } catch (err) { message(err.message); }
+  });
+
+  // ============ Choix du modèle au premier lancement ============
+  let choixModele = null;
+  async function ouvrirChoixModele() {
+    const r = await api("/api/reglages");
+    const recommande = "mlx-community/whisper-large-v3-turbo";
+    choixModele = recommande;
+    $("#fm-choix").innerHTML = r.modeles.map((m) => `
+      <div class="rang cliquable" role="radio" tabindex="0" data-choix="${esc(m.id)}" aria-checked="${m.id === recommande}">
+        <div class="corps">
+          <div>${esc(m.nom)}${m.id === recommande ? '<span class="badge">Recommandé</span>' : ""}<span class="taille">${esc(m.taille || "")}</span></div>
+          <div class="d">${esc(m.detail)}</div>
+        </div>
+        <span class="coche">${icone("i-coche", 15)}</span>
+      </div>`).join("");
+    $("#feuille-modele").showModal();
+    $("#fm-valider").focus();
+  }
+  function selectionnerModele(r) {
+    choixModele = r.dataset.choix;
+    document.querySelectorAll("[data-choix]").forEach((x) => x.setAttribute("aria-checked", x === r));
+  }
+  $("#fm-choix").addEventListener("click", (ev) => { const r = ev.target.closest("[data-choix]"); if (r) selectionnerModele(r); });
+  $("#fm-choix").addEventListener("keydown", (ev) => {
+    const r = ev.target.closest("[data-choix]");
+    if (r && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); selectionnerModele(r); }
+  });
+  $("#feuille-modele").addEventListener("cancel", (ev) => ev.preventDefault());   // choix obligatoire
+  $("#form-modele").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      await api("/api/reglages", { modele_whisper: choixModele });
+      $("#feuille-modele").close();
+      message("Téléchargement du modèle lancé, la progression s'affiche en haut.");
+      sonder();
     } catch (err) { message(err.message); }
   });
 

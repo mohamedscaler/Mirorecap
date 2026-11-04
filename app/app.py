@@ -61,16 +61,21 @@ FICHIER_CONFIG = DOSSIER_APP / "config.json"
 ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
 
 MODELES_WHISPER = [
-    {"id": "mlx-community/whisper-large-v3-turbo", "nom": "Turbo", "detail": "Précis et rapide. Recommandé."},
-    {"id": "mlx-community/whisper-large-v3-mlx", "nom": "Large v3", "detail": "Le plus précis, environ deux fois plus lent."},
-    {"id": "mlx-community/whisper-small-mlx", "nom": "Small", "detail": "Très rapide, moins fiable sur les noms et les chiffres."},
+    {"id": "mlx-community/whisper-small-mlx", "nom": "Normal", "taille": "environ 500 Mo",
+     "detail": "Très rapide et léger. Moins fiable sur les noms propres et les chiffres."},
+    {"id": "mlx-community/whisper-large-v3-turbo", "nom": "Turbo", "taille": "environ 1,6 Go",
+     "detail": "Précis et rapide. Recommandé pour la plupart des appels."},
+    {"id": "mlx-community/whisper-large-v3-mlx", "nom": "Pro", "taille": "environ 3 Go",
+     "detail": "Le plus précis (accents, bruit, jargon), environ deux fois plus lent."},
 ]
+MODELE_RECOMMANDE = "mlx-community/whisper-large-v3-turbo"
 
 CONFIG_DEFAUT = {
     "cle_api_anthropic": "",
     # Vide = iCloud Drive/Comptes-rendus si iCloud Drive est actif, sinon ~/Comptes-rendus
     "dossier_sortie": "",
-    "modele_whisper": MODELES_WHISPER[0]["id"],
+    "modele_whisper": MODELE_RECOMMANDE,
+    "modele_choisi": False,   # le modèle Whisper est choisi au premier lancement
     "modele_claude": "claude-sonnet-5-5",
     # Moteur d'analyse : "auto" (abonnement si Claude Code est installé, sinon clé API),
     # "abonnement" (Claude Code, compte Claude Pro/Max) ou "api" (clé API Anthropic)
@@ -1046,7 +1051,9 @@ def sauver_reglages(donnees):
     if donnees.get("modele_whisper") in {m["id"] for m in MODELES_WHISPER}:
         change = donnees["modele_whisper"] != CONFIG["modele_whisper"]
         CONFIG["modele_whisper"] = donnees["modele_whisper"]
-        if change:
+        premier = not CONFIG.get("modele_choisi")
+        CONFIG["modele_choisi"] = True
+        if change or premier:
             sauver_config(CONFIG)
             preparer_modele_en_fond()   # télécharge tout de suite, pas au prochain appel
     if isinstance(donnees.get("maj_auto"), bool):
@@ -1259,8 +1266,13 @@ class App(rumps.App):
         if precedente and precedente != VERSION:
             sauver_config(CONFIG)
             notifier(f"MiroRecap {VERSION} est installé", "Mise à jour terminée, tout est prêt.")
-        # Premier lancement : le modèle Whisper se télécharge tout de suite, en fond
-        preparer_modele_en_fond()
+        # Modèle Whisper : choisi par l'utilisateur au premier lancement (fenêtre de choix).
+        # Installations existantes dont le modèle est déjà sur le Mac : rien à demander.
+        if not CONFIG.get("modele_choisi") and modele_local(CONFIG["modele_whisper"]):
+            CONFIG["modele_choisi"] = True
+            sauver_config(CONFIG)
+        if CONFIG.get("modele_choisi"):
+            preparer_modele_en_fond()
         # L'UI de la barre de menus ne doit être modifiée que depuis le thread principal
         self.timer = rumps.Timer(self.tic, 1)
         self.timer.start()
@@ -1270,8 +1282,8 @@ class App(rumps.App):
         self.fenetre_demandee = False
         signal.signal(signal.SIGUSR1, lambda *_: setattr(self, "fenetre_demandee", True))
 
-        # Premier lancement (rien de configuré) : réglages ; ouverture par l'utilisateur : fenêtre
-        if moteur_effectif() is None:
+        # Premier lancement (rien de configuré) : choix du modèle puis réglages ; ouverture par l'utilisateur : fenêtre
+        if not CONFIG.get("modele_choisi") or moteur_effectif() is None:
             self.ouvrir_fenetre("reglages")
         elif os.environ.get("MIRORECAP_FENETRE") == "1":
             self.ouvrir_fenetre()
@@ -1295,6 +1307,7 @@ class App(rumps.App):
             "maj_progression": self.maj_progression,
             "derniere_erreur": self.derniere_erreur,
             "modele": MODELE,
+            "choix_modele": not CONFIG.get("modele_choisi"),
             "son_systeme": SON_SYSTEME,
         }
 
