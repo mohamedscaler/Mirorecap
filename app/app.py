@@ -27,8 +27,10 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import unicodedata
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import rumps
@@ -41,6 +43,14 @@ import soundfile as sf
 
 DOSSIER_CODE = Path(__file__).resolve().parent
 DOSSIER_APP = Path.home() / "Library" / "Application Support" / "MiroRecap"
+
+# Mises à jour : on compare app/VERSION local avec celui de la branche main sur GitHub
+DEPOT = "mohamedscaler/Mirorecap"
+URL_VERSION = f"https://raw.githubusercontent.com/{DEPOT}/main/app/VERSION"
+URL_INSTALL = f"https://raw.githubusercontent.com/{DEPOT}/main/install-distant.sh"
+_fichier_version = DOSSIER_CODE / "VERSION"
+VERSION = _fichier_version.read_text().strip() if _fichier_version.exists() else "0"
+INTERVALLE_VERIF = 6 * 3600  # vérifie toutes les 6 heures
 FICHIER_CONFIG = DOSSIER_APP / "config.json"
 ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
 
@@ -164,6 +174,20 @@ def relancer_erreurs():
         elif f.suffix == ".txt":
             f.unlink()  # transcription partielle : elle sera refaite
     return n
+
+
+def version_tuple(v):
+    """'3.10' -> (3, 10) pour comparer correctement les versions."""
+    return tuple(int(x) for x in re.findall(r"\d+", v)) or (0,)
+
+
+def derniere_version():
+    """Version publiée sur GitHub, ou None si pas de réseau."""
+    try:
+        with urllib.request.urlopen(URL_VERSION, timeout=10) as r:
+            return r.read().decode().strip()
+    except Exception:
+        return None
 
 
 def ouvrir_finder(chemin, reveler=False):
@@ -513,6 +537,12 @@ class Api(http.server.BaseHTTPRequestHandler):
                 return self._json(200, sauver_reglages(d))
             if self.path == "/api/erreurs/relancer":
                 return self._json(200, {"relances": relancer_erreurs()})
+            if self.path == "/api/maj/verifier":
+                self.app.verifier_maj_maintenant()
+                return self._json(200, self.app.etat())
+            if self.path == "/api/maj":
+                self.app.lancer_maj()
+                return self._json(200, {"ok": True})
             if self.path == "/api/ouvrir":
                 cible = d.get("cible")
                 if cible == "dossier":
@@ -549,10 +579,13 @@ class App(rumps.App):
         self.statut = ""                 # écrit par le thread de traitement, lu par l'UI
         self.dernier = None              # {"projet", "fichier", "titre"} du dernier compte rendu
         self.fenetre = None
+        self.maj = None                  # numéro de la nouvelle version si disponible
+        self.maj_en_cours = False
         self._compteur = 0
 
         self.bouton = rumps.MenuItem("Démarrer l'enregistrement", callback=lambda _: self.basculer_enregistrement())
         self.item_dernier = rumps.MenuItem("Dernier compte rendu : —", callback=self.ouvrir_dernier)
+        self.item_maj = rumps.MenuItem(f"Version {VERSION} · Rechercher une mise à jour", callback=self.clic_maj)
         self.menu = [
             self.bouton,
             rumps.MenuItem("Ouvrir MiroRecap", callback=lambda _: self.ouvrir_fenetre()),
@@ -562,6 +595,7 @@ class App(rumps.App):
             None,
             self.item_dernier,
             None,
+            self.item_maj,
             rumps.MenuItem("Quitter MiroRecap", callback=self.quitter),
         ]
 
@@ -571,6 +605,7 @@ class App(rumps.App):
         threading.Thread(target=self.serveur.serve_forever, daemon=True).start()
 
         threading.Thread(target=self.travailleur, daemon=True).start()
+        threading.Thread(target=self.boucle_maj, daemon=True).start()
         # L'UI de la barre de menus ne doit être modifiée que depuis le thread principal
         self.timer = rumps.Timer(self.tic, 1)
         self.timer.start()
@@ -591,7 +626,60 @@ class App(rumps.App):
             "erreurs": compter_erreurs(),
             "cle_ok": bool(CONFIG.get("cle_api_anthropic")),
             "dernier": self.dernier,
+            "version": VERSION,
+            "maj": self.maj,
+            "maj_en_cours": self.maj_en_cours,
         }
+
+    # --- Mises à jour ---------------------------------------------------------
+
+    def verifier_maj_maintenant(self):
+        """Compare la version locale à celle de GitHub. Notifie une seule fois par nouvelle version."""
+        v = derniere_version()
+        if v and version_tuple(v) > version_tuple(VERSION):
+            if self.maj != v:
+                notifier("Mise à jour disponible", f"MiroRecap {v} est sortie. 🎙 → Mettre à jour")
+            self.maj = v
+        return self.maj
+
+    def boucle_maj(self):
+        time.sleep(30)  # laisse l'app démarrer tranquillement
+        while True:
+            self.verifier_maj_maintenant()
+            time.sleep(INTERVALLE_VERIF)
+
+    def clic_maj(self, _):
+        if self.maj:
+            try:
+                self.lancer_maj()
+            except Exception as e:
+                notifier("Mise à jour impossible pour l'instant", str(e))
+        else:
+            def verifier():
+                if not self.verifier_maj_maintenant():
+                    notifier("MiroRecap est à jour", f"Tu as la dernière version ({VERSION}).")
+            threading.Thread(target=verifier, daemon=True).start()
+
+    def lancer_maj(self):
+        """Lance l'installateur en arrière-plan. Il arrête l'app, la met à jour
+        (clé, projets et comptes rendus conservés) puis la relance."""
+        if not self.maj:
+            raise RuntimeError("aucune mise à jour disponible")
+        if self.enreg.actif:
+            raise RuntimeError("arrête d'abord l'enregistrement en cours")
+        if self.statut or not self.file_traitement.empty():
+            raise RuntimeError("attends la fin du traitement en cours")
+        self.maj_en_cours = True
+        notifier("Mise à jour en cours", "MiroRecap va se relancer tout seul dans quelques minutes.")
+        journal = open(DOSSIER_APP / "maj.log", "w")
+        # Session séparée : l'installateur survit à l'arrêt de l'app.
+        # Si l'installation échoue, on relance au moins l'app existante.
+        subprocess.Popen(
+            ["/bin/bash", "-c",
+             f'curl -fsSL "{URL_INSTALL}" | bash || open -a "$HOME/Applications/MiroRecap.app"'],
+            stdin=subprocess.DEVNULL, stdout=journal, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
 
     def basculer_enregistrement(self):
         with self.verrou:
@@ -615,6 +703,11 @@ class App(rumps.App):
 
         if self.dernier:
             self.item_dernier.title = f"Dernier : {self.dernier['projet']} / {self.dernier['titre']}"
+
+        if self.maj_en_cours:
+            self.item_maj.title = "Mise à jour en cours…"
+        elif self.maj:
+            self.item_maj.title = f"Mettre à jour vers la version {self.maj}"
 
         # Scan du dossier d'import toutes les 5 secondes
         self._compteur += 1

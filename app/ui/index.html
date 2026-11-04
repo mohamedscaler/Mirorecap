@@ -5,197 +5,264 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MiroRecap</title>
 <style>
-  /* ---------- Jetons ---------- */
+  /* ============ Jetons (couleurs système macOS) ============ */
   :root {
-    --fond: #F3F4F1;
-    --cote: #E6E8E3;
-    --surface: #FFFFFF;
-    --survol: #DADDD6;
-    --champ: #E6E8E3;
-    --encre: #121412;
-    --second: #5A5F59;
-    --accent: #D7392A;
-    --accent-appui: #B92E21;
-    --sur-accent: #FFFFFF;
+    --fenetre: #FFFFFF;
+    --barre: #EEEEF1;            /* barre latérale */
+    --page: #F5F5F7;             /* fond des réglages (groupes) */
+    --groupe: #FFFFFF;           /* cartes groupées */
+    --texte: #1D1D1F;
+    --second: #86868B;
+    --separateur: rgba(0, 0, 0, .09);
+    --remplissage: rgba(0, 0, 0, .05);
+    --remplissage-fort: rgba(0, 0, 0, .09);
+    --bleu: #007AFF;
+    --rouge: #FF3B30;
+    --vert: #34C759;
+    --orange: #FF9500;
+    --gris: #8E8E93;
+    --selection-liste: #007AFF;
 
-    --t-xl: 44px;   /* chrono */
-    --t-l: 28px;    /* titres de vue, titre du compte rendu */
-    --t-m: 16px;    /* texte */
-    --t-s: 13px;    /* notes secondaires */
-
-    --marge: 28px;
-    --rayon: 999px; /* boutons : entièrement ronds, partout */
-    --duree: 160ms;
-    --courbe: cubic-bezier(.2, .7, .2, 1);
+    --rayon: 10px;
+    --courbe: cubic-bezier(.25, .8, .25, 1);
     color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --fond: #141614;
-      --cote: #1C1F1C;
-      --surface: #1F221F;
-      --survol: #2B2F2B;
-      --champ: #262A26;
-      --encre: #ECEEEA;
-      --second: #A2A8A0;
-      --accent: #E5483A;
-      --accent-appui: #F05E50;
+      --fenetre: #1E1E1E;
+      --barre: #2A2A2C;
+      --page: #1C1C1E;
+      --groupe: #2C2C2E;
+      --texte: #F5F5F7;
+      --second: #98989D;
+      --separateur: rgba(255, 255, 255, .09);
+      --remplissage: rgba(255, 255, 255, .07);
+      --remplissage-fort: rgba(255, 255, 255, .12);
+      --bleu: #0A84FF;
+      --rouge: #FF453A;
+      --vert: #30D158;
+      --orange: #FF9F0A;
+      --selection-liste: #0A84FF;
     }
   }
 
-  /* ---------- Base ---------- */
+  /* ============ Base ============ */
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
   body {
-    font: var(--t-m)/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-    color: var(--encre);
-    background: var(--fond);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    color: var(--texte);
+    background: var(--fenetre);
     display: grid;
-    grid-template-columns: 280px 1fr;
+    grid-template-columns: 232px 1fr;
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
+    -webkit-user-select: none; user-select: none;
   }
+  .selectionnable, input, textarea { -webkit-user-select: text; user-select: text; }
   button, input, select, textarea { font: inherit; color: inherit; }
-  button { cursor: pointer; border: 0; background: none; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button { cursor: default; border: 0; background: none; }
+  :focus-visible { outline: 3px solid color-mix(in srgb, var(--bleu) 45%, transparent); outline-offset: 1px; border-radius: 6px; }
   [hidden] { display: none !important; }
-  .second { color: var(--second); font-size: var(--t-s); }
+  svg { display: block; flex-shrink: 0; }
+  .second { color: var(--second); }
+  .petit { font-size: 11px; }
 
-  /* ---------- Colonne de gauche ---------- */
-  .cote {
-    background: var(--cote);
-    display: flex;
-    flex-direction: column;
-    padding: var(--marge);
-    gap: 40px;
-    overflow-y: auto;
+  /* ============ Barre latérale ============ */
+  .barre {
+    background: var(--barre);
+    display: flex; flex-direction: column;
+    padding: 14px 10px 10px;
+    overflow: hidden;
+    border-right: 1px solid var(--separateur);
   }
-  .marque { font-size: var(--t-m); font-weight: 700; letter-spacing: -0.01em; }
+  .barre-defilement { flex: 1; overflow-y: auto; }
+  .titre-section { font-size: 11px; font-weight: 600; color: var(--second); padding: 14px 10px 4px; }
 
-  .micro { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .elt {
+    width: 100%; display: flex; align-items: center; gap: 8px;
+    padding: 5px 8px; border-radius: 7px; text-align: left;
+    color: var(--texte); text-decoration: none;
+  }
+  .elt:hover { background: var(--remplissage); }
+  .elt[aria-current="page"] { background: var(--remplissage-fort); }
+  .elt .nom { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .elt .compte { color: var(--second); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .pastille {
+    width: 22px; height: 22px; border-radius: 6px;
+    display: grid; place-items: center; color: #fff;
+  }
+  .pastille.bleu { background: var(--bleu); }
+  .pastille.orange { background: var(--orange); }
+  .pastille.gris { background: var(--gris); }
+  .icone-dossier { color: var(--bleu); width: 22px; display: grid; place-items: center; }
+
+  /* Enregistreur (façon Dictaphone) */
+  .enregistreur {
+    margin-top: 10px;
+    background: var(--groupe);
+    border-radius: 12px;
+    padding: 16px 14px 14px;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .chrono { font-size: 30px; font-weight: 300; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .statut { font-size: 11px; color: var(--second); min-height: 16px; text-align: center; }
   .rec {
-    width: 132px; height: 132px;
-    border-radius: 50%;
-    background: var(--accent);
-    color: var(--sur-accent);
-    font-weight: 600;
+    margin-top: 10px;
+    width: 58px; height: 58px; border-radius: 50%;
+    border: 3px solid var(--remplissage-fort);
     display: grid; place-items: center;
-    margin-bottom: 18px;
-    transition: transform var(--duree) var(--courbe), background-color var(--duree);
+    transition: transform 150ms var(--courbe);
   }
-  .rec:hover { transform: scale(1.03); }
-  .rec:active { transform: scale(.96); background: var(--accent-appui); }
-  .rec[aria-pressed="true"] { background: var(--encre); color: var(--fond); }
-  .rec-interieur { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-  .rec-point { width: 14px; height: 14px; border-radius: 50%; background: currentColor; }
-  .rec[aria-pressed="true"] .rec-point { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 50% { opacity: .25; } }
-  .chrono {
-    font-size: var(--t-xl);
-    font-weight: 600;
-    letter-spacing: -0.03em;
-    line-height: 1;
-    font-variant-numeric: tabular-nums;
+  .rec:active { transform: scale(.92); }
+  .rec-centre {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--rouge);
+    transition: width 220ms var(--courbe), height 220ms var(--courbe), border-radius 220ms var(--courbe);
   }
-  .statut { color: var(--second); min-height: 1.5em; }
+  .rec[aria-pressed="true"] .rec-centre { width: 22px; height: 22px; border-radius: 5px; }
+  .rec-libelle { font-size: 11px; color: var(--second); margin-top: 4px; }
+  .onde { display: flex; gap: 3px; align-items: center; height: 18px; visibility: hidden; }
+  .enregistre .onde { visibility: visible; }
+  .onde span { width: 3px; border-radius: 2px; background: var(--rouge); height: 4px; }
+  .enregistre .onde span { animation: onde 900ms ease-in-out infinite; }
+  .onde span:nth-child(2) { animation-delay: -700ms; }
+  .onde span:nth-child(3) { animation-delay: -500ms; }
+  .onde span:nth-child(4) { animation-delay: -300ms; }
+  .onde span:nth-child(5) { animation-delay: -100ms; }
+  @keyframes onde { 50% { height: 18px; } }
 
-  .nav { display: flex; flex-direction: column; gap: 2px; margin: 0 -12px; }
-  .nav a {
-    color: var(--encre); text-decoration: none;
-    padding: 8px 12px; border-radius: 10px;
-    transition: background-color var(--duree);
+  /* ============ Contenu ============ */
+  main { display: flex; flex-direction: column; overflow: hidden; background: var(--fenetre); }
+  .bandeau {
+    margin: 12px 16px 0;
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: var(--rayon);
+    background: var(--remplissage);
   }
-  .nav a:hover { background: var(--survol); }
-  .nav a[aria-current="page"] { background: var(--surface); font-weight: 600; }
+  .bandeau .icone { color: var(--orange); }
+  .bandeau.maj .icone { color: var(--bleu); }
+  .bandeau .texte { flex: 1; }
+  .vue { flex: 1; overflow: hidden; display: flex; flex-direction: column; animation: apparition 200ms var(--courbe); }
+  @keyframes apparition { from { opacity: 0; } }
 
-  .pied { margin-top: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-  .lien { color: var(--second); font-size: var(--t-s); padding: 2px 0; transition: color var(--duree); }
-  .lien:hover { color: var(--encre); }
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  h2 { font-size: 15px; font-weight: 600; }
 
-  /* ---------- Zone principale ---------- */
-  main { overflow: hidden; display: flex; flex-direction: column; }
-  .alerte {
-    background: var(--accent); color: var(--sur-accent);
-    padding: 12px var(--marge);
-    display: flex; gap: 16px; align-items: center; justify-content: space-between;
+  /* Boutons macOS */
+  .bouton {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; min-height: 26px; border-radius: 7px;
+    background: var(--remplissage-fort); white-space: nowrap;
+    transition: filter 120ms;
   }
-  .alerte a { color: inherit; font-weight: 600; }
-  .vue { flex: 1; overflow-y: auto; padding: var(--marge) var(--marge) 64px; animation: entree 220ms var(--courbe); }
-  @keyframes entree { from { opacity: 0; transform: translateY(12px); } }
-  h1 { font-size: var(--t-l); letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 20px; }
-  h2 { font-size: var(--t-m); font-weight: 650; margin-bottom: 6px; }
+  .bouton:hover { filter: brightness(.96); }
+  .bouton:active { filter: brightness(.88); }
+  .bouton.principal { background: var(--bleu); color: #fff; font-weight: 500; }
+  .lien { color: var(--bleu); padding: 2px 0; }
+  .lien:hover { text-decoration: underline; }
 
-  /* Boutons texte */
-  .btn {
-    background: var(--encre); color: var(--fond);
-    padding: 9px 18px; border-radius: var(--rayon); font-weight: 600; white-space: nowrap;
-    transition: transform var(--duree) var(--courbe), opacity var(--duree);
+  /* Champs */
+  .champ, select, textarea {
+    background: var(--remplissage); border: 0; border-radius: 7px;
+    padding: 6px 9px; width: 100%; outline: none;
+    transition: box-shadow 120ms;
   }
-  .btn:hover { opacity: .88; }
-  .btn:active { transform: scale(.97); }
-  .btn.discret { background: var(--champ); color: var(--encre); }
+  .champ:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--bleu) 45%, transparent); }
+  textarea { resize: none; min-height: 72px; line-height: 1.45; }
+  .recherche { position: relative; }
+  .recherche svg { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--second); }
+  .recherche .champ { padding-left: 28px; }
 
-  /* Champs (seuls éléments avec un contour, au focus) */
-  input[type="text"], input[type="search"], input[type="password"], select, textarea {
-    background: var(--champ); border: 0; border-radius: 10px;
-    padding: 9px 12px; width: 100%;
+  /* ============ Vue comptes rendus (façon Notes) ============ */
+  #vue-comptes-rendus { flex-direction: row; }
+  .colonne-liste {
+    width: 290px; flex-shrink: 0;
+    display: flex; flex-direction: column;
+    border-right: 1px solid var(--separateur);
   }
-  textarea { resize: vertical; min-height: 64px; line-height: 1.45; }
-  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; }
-
-  /* ---------- Vue comptes rendus ---------- */
-  #vue-comptes-rendus { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 0; padding: 0; overflow: hidden; }
-  .col-liste { padding: var(--marge); overflow-y: auto; }
-  .filtres { display: grid; gap: 8px; margin-bottom: 16px; }
-  .liste { list-style: none; display: flex; flex-direction: column; gap: 2px; margin: 0 -12px; }
-  .liste button {
+  .entete-liste { padding: 16px 14px 10px; display: flex; flex-direction: column; gap: 10px; }
+  .entete-liste .ligne { display: flex; align-items: baseline; justify-content: space-between; }
+  .liste { list-style: none; overflow-y: auto; flex: 1; padding: 0 8px 12px; }
+  .liste li + li .rangee { box-shadow: 0 -1px 0 var(--separateur); }
+  .liste li + li .rangee[aria-current="true"], .liste li[data-suivant-selectionne] + li .rangee { box-shadow: none; }
+  .rangee {
     width: 100%; text-align: left;
-    padding: 10px 12px; border-radius: 10px;
-    display: flex; flex-direction: column; gap: 2px;
-    transition: background-color var(--duree);
+    padding: 9px 10px; border-radius: 7px;
+    display: flex; flex-direction: column; gap: 1px;
   }
-  .liste button:hover { background: var(--survol); }
-  .liste button[aria-current="true"] { background: var(--surface); }
-  .liste .t { font-weight: 600; line-height: 1.3; }
+  .rangee .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rangee .m { font-size: 12px; color: var(--second); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rangee[aria-current="true"] { background: var(--selection-liste); color: #fff; }
+  .rangee[aria-current="true"] .m { color: rgba(255, 255, 255, .8); }
+  .groupe-date { font-size: 11px; font-weight: 600; color: var(--second); padding: 12px 10px 4px; }
+  .vide { color: var(--second); padding: 24px 18px; text-align: center; line-height: 1.5; }
 
-  .lecteur { background: var(--surface); padding: 40px 48px 80px; overflow-y: auto; }
-  .lecteur-tete { margin-bottom: 28px; }
-  .lecteur-tete h1 { margin-bottom: 8px; }
-  .lecteur-tete .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-  .md { max-width: 68ch; }
-  .md h2 { margin-top: 28px; }
-  .md p, .md ul, .md ol { margin-bottom: 12px; }
-  .md ul, .md ol { padding-left: 20px; }
-  .md li { margin-bottom: 4px; }
-  .md .ligne { margin-bottom: 6px; }
-  .md .temps { color: var(--second); font-variant-numeric: tabular-nums; margin-right: 6px; }
-  .md .pause { height: 28px; }
-  .vide { color: var(--second); max-width: 40ch; }
+  .lecteur { flex: 1; overflow-y: auto; padding: 28px 40px 60px; }
+  .lecteur-tete { max-width: 680px; margin: 0 auto 22px; }
+  .lecteur-tete .meta { color: var(--second); margin-top: 4px; display: flex; gap: 6px; align-items: center; }
+  .etiquette { background: var(--remplissage-fort); padding: 1px 8px; border-radius: 999px; font-size: 11px; color: var(--texte); }
+  .lecteur-tete .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .md { max-width: 680px; margin: 0 auto; font-size: 14px; line-height: 1.6; }
+  .md h2 { margin: 22px 0 6px; }
+  .md p, .md ul, .md ol { margin-bottom: 10px; }
+  .md ul, .md ol { padding-left: 22px; }
+  .md li { margin-bottom: 3px; }
+  .md .meta-cr { list-style: none; padding: 0; color: var(--second); font-size: 12px; margin-bottom: 4px; }
+  .md .transcription { background: var(--page); border-radius: 12px; padding: 14px 16px; margin-top: 8px; }
+  .md .ligne { display: grid; grid-template-columns: 48px 1fr; gap: 8px; margin-bottom: 4px; font-size: 13px; }
+  .md .temps { color: var(--bleu); font-variant-numeric: tabular-nums; }
+  .vide-lecteur { height: 100%; display: grid; place-items: center; color: var(--second); text-align: center; }
+  .vide-lecteur svg { margin: 0 auto 10px; opacity: .5; }
 
-  /* ---------- Vue projets & réglages ---------- */
-  .colonne { max-width: 640px; display: flex; flex-direction: column; gap: 44px; }
-  .bloc { display: flex; flex-direction: column; gap: 10px; }
-  .bloc .ligne-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .projets { display: flex; flex-direction: column; gap: 12px; }
-  .projet { background: var(--surface); border-radius: 14px; padding: 18px; display: grid; gap: 10px; }
-  .projet .entete { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-  .modeles { display: flex; flex-direction: column; gap: 6px; }
-  .modele {
-    display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline;
-    background: var(--surface); border-radius: 12px; padding: 12px 14px; cursor: pointer;
-    transition: background-color var(--duree);
+  /* ============ Vues à groupes (projets, réglages) ============ */
+  .defilement { flex: 1; overflow-y: auto; background: var(--page); }
+  .contenu { max-width: 640px; margin: 0 auto; padding: 26px 24px 60px; }
+  .tete-vue { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .intro { color: var(--second); margin-bottom: 22px; }
+  .titre-groupe { font-size: 13px; font-weight: 600; padding: 0 4px 6px; margin-top: 22px; }
+  .groupe { background: var(--groupe); border-radius: var(--rayon); overflow: hidden; }
+  .rang {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; min-height: 44px;
+    position: relative;
   }
-  .modele:hover { background: var(--survol); }
-  .modele input { grid-row: span 2; accent-color: var(--accent); }
-  .modele .nom { font-weight: 600; }
-  .chemin { word-break: break-all; }
+  .rang + .rang::before { content: ""; position: absolute; top: 0; left: 14px; right: 0; height: 1px; background: var(--separateur); }
+  .rang .corps { flex: 1; min-width: 0; }
+  .rang .corps .d { color: var(--second); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rang.cliquable:hover { background: var(--remplissage); }
+  .rang .chevron { color: var(--second); opacity: .6; }
+  .rang.colonne { flex-direction: column; align-items: stretch; gap: 8px; }
+  .note { color: var(--second); font-size: 11px; padding: 6px 4px 0; line-height: 1.4; }
+  .point { width: 8px; height: 8px; border-radius: 50%; background: var(--gris); }
+  .point.ok { background: var(--vert); }
+  .coche { color: var(--bleu); visibility: hidden; }
+  .rang[aria-checked="true"] .coche { visibility: visible; }
+  .chemin { font-size: 12px; color: var(--second); word-break: break-all; }
 
+  /* Feuille (dialogue) façon macOS */
+  dialog {
+    margin: auto; border: 0; border-radius: 14px;
+    background: var(--groupe); color: var(--texte);
+    width: min(440px, 90vw); padding: 22px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .3), 0 0 0 1px var(--separateur);
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .25); }
+  dialog[open] { animation: feuille 220ms var(--courbe); }
+  @keyframes feuille { from { opacity: 0; transform: translateY(-12px) scale(.98); } }
+  dialog form { display: flex; flex-direction: column; gap: 10px; }
+  dialog label { font-weight: 500; margin-top: 4px; }
+  dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+  dialog .supprimer-info { color: var(--second); font-size: 11px; }
+
+  /* Message flottant */
   .message {
-    position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 20px);
-    background: var(--encre); color: var(--fond);
-    padding: 10px 18px; border-radius: var(--rayon);
+    position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 12px);
+    background: var(--groupe); color: var(--texte);
+    padding: 8px 14px; border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .18), 0 0 0 1px var(--separateur);
     opacity: 0; pointer-events: none;
-    transition: opacity var(--duree), transform var(--duree) var(--courbe);
+    transition: opacity 180ms, transform 180ms var(--courbe);
   }
   .message.visible { opacity: 1; transform: translate(-50%, 0); }
 
@@ -206,115 +273,168 @@
 </head>
 <body>
 
-<aside class="cote">
-  <div class="marque">MiroRecap</div>
+<!-- Icônes (style SF Symbols) -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-doc" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" d="M4 1.8h5.2L12.5 5v9.2H4z"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M6 8h4.5M6 10.5h4.5"/></symbol>
+  <symbol id="i-dossier" viewBox="0 0 16 16"><path fill="currentColor" d="M1.5 4.2c0-.8.6-1.4 1.4-1.4h3.3l1.4 1.5h5.5c.8 0 1.4.6 1.4 1.4v6.5c0 .8-.6 1.4-1.4 1.4H2.9c-.8 0-1.4-.6-1.4-1.4z"/></symbol>
+  <symbol id="i-reglages" viewBox="0 0 16 16"><path fill="currentColor" d="M8 5.3a2.7 2.7 0 1 0 0 5.4 2.7 2.7 0 0 0 0-5.4zm6.3 3.6-.1-1.8 1.3-1-1.4-2.4-1.6.6-1.5-.9L10.7 2H8 5.3l-.3 1.6-1.5.9-1.6-.6L.5 6.3l1.3 1-.1.7.1 1-1.3 1 1.4 2.4 1.6-.6 1.5.9.3 1.6h5.4l.3-1.6 1.5-.9 1.6.6 1.4-2.4z"/></symbol>
+  <symbol id="i-loupe" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="m10.5 10.5 3.3 3.3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m6 3 5 5-5 5"/></symbol>
+  <symbol id="i-coche" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m3 8.5 3.2 3L13 4.5"/></symbol>
+  <symbol id="i-alerte" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm-.8 3h1.6l-.2 5H7.4zm.8 6.2a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></symbol>
+  <symbol id="i-fleche" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm-.8 3.5h1.6v4.1l1.6-1.6 1.1 1.1L8 12 4.5 8.6l1.1-1.1 1.6 1.6z"/></symbol>
+  <symbol id="i-micro" viewBox="0 0 16 16"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5"/></symbol>
+</svg>
 
-  <section class="micro" aria-label="Enregistrement">
-    <button id="rec" class="rec" aria-pressed="false">
-      <span class="rec-interieur"><span class="rec-point"></span><span id="rec-texte">Enregistrer</span></span>
-    </button>
-    <p id="chrono" class="chrono">00:00</p>
-    <p id="statut" class="statut" aria-live="polite">Prêt</p>
-  </section>
-
-  <nav class="nav" aria-label="Sections">
-    <a href="#comptes-rendus" data-vue="comptes-rendus">Comptes rendus</a>
-    <a href="#projets" data-vue="projets">Projets</a>
-    <a href="#reglages" data-vue="reglages">Réglages</a>
-  </nav>
-
-  <div class="pied">
-    <button class="lien" data-ouvrir="dossier">Ouvrir le dossier dans le Finder</button>
-    <button class="lien" data-ouvrir="import">Dossier d'import (iPhone)</button>
+<!-- ============ Barre latérale ============ -->
+<aside class="barre">
+  <div class="barre-defilement">
+    <nav aria-label="Sections">
+      <a class="elt" href="#comptes-rendus" data-vue="comptes-rendus">
+        <span class="pastille bleu"><svg width="14" height="14"><use href="#i-doc"/></svg></span>
+        <span class="nom">Comptes rendus</span><span id="nb-total" class="compte"></span>
+      </a>
+      <a class="elt" href="#projets" data-vue="projets">
+        <span class="pastille orange"><svg width="14" height="14"><use href="#i-dossier"/></svg></span>
+        <span class="nom">Projets</span>
+      </a>
+      <a class="elt" href="#reglages" data-vue="reglages">
+        <span class="pastille gris"><svg width="14" height="14"><use href="#i-reglages"/></svg></span>
+        <span class="nom">Réglages</span>
+      </a>
+    </nav>
+    <p class="titre-section">Projets</p>
+    <div id="raccourcis-projets"></div>
   </div>
+
+  <section id="enregistreur" class="enregistreur" aria-label="Enregistrement">
+    <div class="onde" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+    <p id="chrono" class="chrono">00:00</p>
+    <p id="statut" class="statut" aria-live="polite">Prêt à enregistrer</p>
+    <button id="rec" class="rec" aria-pressed="false" aria-label="Enregistrer"><span class="rec-centre"></span></button>
+    <span id="rec-texte" class="rec-libelle">Enregistrer</span>
+  </section>
 </aside>
 
+<!-- ============ Contenu ============ -->
 <main>
-  <div id="alerte" class="alerte" hidden>
-    <span>Ajoute ta clé API pour que tes enregistrements soient analysés.</span>
-    <a href="#reglages">Ajouter ma clé</a>
+  <div id="bandeau-maj" class="bandeau maj" hidden>
+    <svg class="icone" width="18" height="18"><use href="#i-fleche"/></svg>
+    <span id="maj-texte" class="texte"></span>
+    <button id="maj-bouton" class="bouton principal">Mettre à jour</button>
+  </div>
+  <div id="alerte" class="bandeau" hidden>
+    <svg class="icone" width="18" height="18"><use href="#i-alerte"/></svg>
+    <span class="texte">Ajoute ta clé API pour que tes enregistrements soient analysés.</span>
+    <a class="bouton principal" href="#reglages" style="text-decoration:none">Ajouter ma clé</a>
   </div>
 
   <!-- Comptes rendus -->
   <section id="vue-comptes-rendus" class="vue" hidden>
-    <div class="col-liste">
-      <h1>Comptes rendus</h1>
-      <div class="filtres">
-        <input id="recherche" type="search" placeholder="Rechercher un titre" aria-label="Rechercher">
-        <select id="filtre-projet" aria-label="Filtrer par projet"></select>
+    <div class="colonne-liste">
+      <div class="entete-liste">
+        <div class="ligne"><h1 id="titre-liste">Comptes rendus</h1><span id="filtre-actif" class="second"></span></div>
+        <div class="recherche">
+          <svg width="13" height="13"><use href="#i-loupe"/></svg>
+          <input id="recherche" class="champ" type="search" placeholder="Rechercher" aria-label="Rechercher">
+        </div>
       </div>
       <ul id="liste" class="liste"></ul>
-      <p id="liste-vide" class="vide" hidden>Aucun compte rendu pour l'instant. Lance un enregistrement ou dépose un audio dans le dossier d'import.</p>
+      <p id="liste-vide" class="vide" hidden>Aucun compte rendu pour l'instant.<br>Lance un enregistrement ou dépose un audio dans le dossier d'import.</p>
     </div>
-    <article id="lecteur" class="lecteur">
-      <p class="vide">Choisis un compte rendu dans la liste.</p>
+    <article id="lecteur" class="lecteur selectionnable">
+      <div class="vide-lecteur"><div><svg width="40" height="40"><use href="#i-doc"/></svg>Choisis un compte rendu</div></div>
     </article>
   </section>
 
   <!-- Projets -->
   <section id="vue-projets" class="vue" hidden>
-    <div class="colonne">
-      <div>
-        <h1>Projets</h1>
-        <p class="second">Chaque projet est un dossier. Claude range chaque compte rendu dans celui qui correspond, grâce à son nom et à sa description.</p>
-      </div>
-
-      <form id="form-projet" class="bloc">
-        <h2>Nouveau projet</h2>
-        <input id="np-nom" type="text" placeholder="Nom (client, entreprise, sujet…)" required aria-label="Nom du projet">
-        <textarea id="np-desc" placeholder="Une phrase pour aider le classement, par exemple : boutique Shopify, campagnes TikTok Ads" aria-label="Description"></textarea>
-        <div class="ligne-actions"><button class="btn" type="submit">Créer le projet</button></div>
-      </form>
-
-      <div class="bloc">
-        <h2>Tes projets</h2>
-        <div id="liste-projets" class="projets"></div>
+    <div class="defilement">
+      <div class="contenu">
+        <div class="tete-vue">
+          <h1>Projets</h1>
+          <button id="nouveau-projet" class="bouton principal"><svg width="12" height="12"><use href="#i-plus"/></svg>Nouveau projet</button>
+        </div>
+        <p class="intro">Claude range chaque compte rendu dans le projet qui correspond, grâce à son nom et à sa description.</p>
+        <div id="liste-projets" class="groupe"></div>
+        <p class="note">Chaque projet est un dossier dans Comptes-rendus. Ce qui ne correspond à aucun projet va dans Divers.</p>
       </div>
     </div>
   </section>
 
   <!-- Réglages -->
   <section id="vue-reglages" class="vue" hidden>
-    <div class="colonne">
-      <h1>Réglages</h1>
+    <div class="defilement">
+      <div class="contenu">
+        <h1>Réglages</h1>
 
-      <form id="form-cle" class="bloc">
-        <h2>Clé API Anthropic</h2>
-        <p id="cle-etat" class="second"></p>
-        <input id="cle" type="password" placeholder="sk-ant-…" autocomplete="off" aria-label="Clé API">
-        <div class="ligne-actions">
-          <button class="btn" type="submit">Enregistrer la clé</button>
-          <button class="lien" type="button" data-ouvrir="console">Créer une clé sur console.anthropic.com</button>
+        <p class="titre-groupe">Clé API Anthropic</p>
+        <div class="groupe">
+          <div class="rang"><span id="cle-point" class="point"></span><div class="corps" id="cle-etat"></div></div>
+          <form id="form-cle" class="rang">
+            <input id="cle" class="champ" type="password" placeholder="Colle ta clé sk-ant-…" autocomplete="off" aria-label="Clé API">
+            <button class="bouton principal" type="submit">Enregistrer</button>
+          </form>
         </div>
-      </form>
+        <p class="note">Facturée à l'usage. <button class="lien" type="button" data-ouvrir="console">Créer une clé sur console.anthropic.com</button></p>
 
-      <div class="bloc">
-        <h2>Transcription</h2>
-        <p class="second">Whisper tourne sur ton Mac : l'audio ne quitte jamais ta machine. Un modèle se télécharge au premier usage, ensuite tout se fait hors ligne.</p>
-        <div id="modeles" class="modeles" role="radiogroup" aria-label="Modèle Whisper"></div>
-      </div>
+        <p class="titre-groupe">Transcription</p>
+        <div id="modeles" class="groupe" role="radiogroup" aria-label="Modèle Whisper"></div>
+        <p class="note">Whisper tourne sur ton Mac, l'audio ne quitte pas ta machine. Un modèle se télécharge au premier usage.</p>
 
-      <form id="form-dossier" class="bloc">
-        <h2>Dossier des comptes rendus</h2>
-        <p id="dossier-actuel" class="second chemin"></p>
-        <input id="dossier" type="text" placeholder="Laisser vide pour iCloud Drive/Comptes-rendus" aria-label="Dossier personnalisé">
-        <div class="ligne-actions">
-          <button class="btn" type="submit">Changer de dossier</button>
-          <span class="second">Prend effet au prochain lancement de l'app.</span>
+        <p class="titre-groupe">Stockage</p>
+        <div class="groupe">
+          <div class="rang">
+            <div class="corps"><div>Dossier des comptes rendus</div><div id="dossier-actuel" class="chemin selectionnable"></div></div>
+            <button class="bouton" type="button" data-ouvrir="dossier">Afficher</button>
+          </div>
+          <div class="rang">
+            <div class="corps"><div>Dossier d'import</div><div class="d">Dépose ici les audios de l'iPhone</div></div>
+            <button class="bouton" type="button" data-ouvrir="import">Afficher</button>
+          </div>
+          <form id="form-dossier" class="rang">
+            <input id="dossier" class="champ" type="text" placeholder="Autre dossier (vide = iCloud Drive)" aria-label="Dossier personnalisé">
+            <button class="bouton" type="submit">Changer</button>
+          </form>
         </div>
-      </form>
+        <p class="note">Un changement de dossier prend effet au prochain lancement de MiroRecap.</p>
 
-      <div class="bloc">
-        <h2>Erreurs</h2>
-        <p id="erreurs-etat" class="second"></p>
-        <div class="ligne-actions">
-          <button id="relancer" class="btn discret" type="button">Relancer le traitement</button>
-          <button class="lien" type="button" data-ouvrir="erreurs">Voir les fichiers</button>
+        <p class="titre-groupe">Erreurs</p>
+        <div class="groupe">
+          <div class="rang">
+            <div class="corps" id="erreurs-etat"></div>
+            <button class="bouton" type="button" data-ouvrir="erreurs">Afficher</button>
+            <button id="relancer" class="bouton principal" type="button">Relancer</button>
+          </div>
+        </div>
+
+        <p class="titre-groupe">Mises à jour</p>
+        <div class="groupe">
+          <div class="rang">
+            <div class="corps" id="version-etat"></div>
+            <button id="verifier-maj" class="bouton" type="button">Rechercher</button>
+          </div>
         </div>
       </div>
     </div>
   </section>
 </main>
+
+<!-- Feuille de création / modification de projet -->
+<dialog id="feuille-projet">
+  <form id="form-projet" method="dialog">
+    <h2 id="feuille-titre">Nouveau projet</h2>
+    <label for="p-nom">Nom</label>
+    <input id="p-nom" class="champ" type="text" placeholder="Client, entreprise, sujet…" required>
+    <label for="p-desc">Description</label>
+    <textarea id="p-desc" placeholder="Une phrase pour aider le classement. Ex : boutique Shopify, campagnes TikTok Ads"></textarea>
+    <div class="actions">
+      <button class="bouton" type="button" id="p-annuler">Annuler</button>
+      <button class="bouton principal" type="submit" id="p-valider">Créer</button>
+    </div>
+  </form>
+</dialog>
 
 <p id="message" class="message" role="status"></p>
 
@@ -322,7 +442,7 @@
   const JETON = "__JETON__";
   const $ = (s) => document.querySelector(s);
 
-  // ---------- Utilitaires ----------
+  // ============ Utilitaires ============
   async function api(chemin, donnees) {
     const options = { headers: { "X-Jeton": JETON } };
     if (donnees !== undefined) {
@@ -336,101 +456,163 @@
     return json;
   }
 
-  function esc(t) {
-    return String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  }
+  const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const icone = (id, t = 14) => `<svg width="${t}" height="${t}"><use href="#${id}"/></svg>`;
+  const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 
-  let minuterieMessage;
+  let minuterie;
   function message(texte) {
     const el = $("#message");
     el.textContent = texte;
     el.classList.add("visible");
-    clearTimeout(minuterieMessage);
-    minuterieMessage = setTimeout(() => el.classList.remove("visible"), 2600);
+    clearTimeout(minuterie);
+    minuterie = setTimeout(() => el.classList.remove("visible"), 2600);
   }
 
-  function dateLisible(iso) {
+  function heure(iso) {
+    return new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  }
+  function dateLongue(iso) {
     const d = new Date(iso);
-    const jour = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "long" });
-    return `${jour} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+    return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) + " à " + heure(iso);
+  }
+  // Regroupe comme dans Notes : Aujourd'hui, Hier, 7 jours précédents, puis par mois
+  function groupeDate(iso) {
+    const d = new Date(iso), j = new Date();
+    const jours = Math.floor((new Date(j.toDateString()) - new Date(d.toDateString())) / 864e5);
+    if (jours === 0) return "Aujourd'hui";
+    if (jours === 1) return "Hier";
+    if (jours < 7) return "7 jours précédents";
+    if (jours < 30) return "30 jours précédents";
+    const m = d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+    return m.charAt(0).toUpperCase() + m.slice(1);
   }
 
-  // Petit rendu markdown : titres, listes, gras, lignes de transcription horodatées
+  // Rendu markdown : titres, listes, gras, transcription horodatée
   function markdown(texte) {
     const inline = (t) => esc(t)
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
       .replace(/`([^`]+)`/g, "$1");
-    let html = "", liste = null;
-    const fermer = () => { if (liste) { html += `</${liste}>`; liste = null; } };
     const lignes = texte.split("\n");
-    if (lignes[0].startsWith("# ")) lignes.shift(); // le titre est affiché à part
+    if (lignes[0].startsWith("# ")) lignes.shift();
+
+    let html = "", liste = null, dansTranscription = false, debut = true;
+    const fermer = () => { if (liste) { html += `</${liste}>`; liste = null; } };
     for (const brute of lignes) {
       const l = brute.trimEnd();
       let m;
       if (!l.trim()) { fermer(); continue; }
-      if (l.trim() === "---") { fermer(); html += '<div class="pause"></div>'; continue; }
-      if ((m = l.match(/^#{2,6}\s+(.*)/))) { fermer(); html += `<h2>${inline(m[1])}</h2>`; continue; }
+      if (l.trim() === "---") { fermer(); debut = false; continue; }
+      if ((m = l.match(/^#{2,6}\s+(.*)/))) {
+        fermer(); debut = false;
+        if (dansTranscription) { html += "</div>"; dansTranscription = false; }
+        html += `<h2>${inline(m[1])}</h2>`;
+        if (/transcription/i.test(m[1])) { html += '<div class="transcription">'; dansTranscription = true; }
+        continue;
+      }
       if ((m = l.match(/^\s*[-*]\s+(.*)/))) {
-        if (liste !== "ul") { fermer(); html += "<ul>"; liste = "ul"; }
+        // Les lignes Date / Projet / Audio en tête sont des métadonnées discrètes
+        const cls = debut && !liste ? ' class="meta-cr"' : "";
+        if (liste !== "ul") { fermer(); html += `<ul${cls}>`; liste = "ul"; }
         html += `<li>${inline(m[1])}</li>`; continue;
       }
       if ((m = l.match(/^\s*\d+[.)]\s+(.*)/))) {
         if (liste !== "ol") { fermer(); html += "<ol>"; liste = "ol"; }
         html += `<li>${inline(m[1])}</li>`; continue;
       }
-      fermer();
+      fermer(); debut = false;
       if ((m = l.match(/^\[(\d{2}:\d{2})\]\s*(.*)/))) {
-        html += `<p class="ligne"><span class="temps">${m[1]}</span>${inline(m[2])}</p>`; continue;
+        html += `<p class="ligne"><span class="temps">${m[1]}</span><span>${inline(m[2])}</span></p>`; continue;
       }
       html += `<p>${inline(l)}</p>`;
     }
     fermer();
+    if (dansTranscription) html += "</div>";
     return html;
   }
 
-  // ---------- Navigation ----------
+  // ============ Navigation ============
   const VUES = ["comptes-rendus", "projets", "reglages"];
+  let filtreProjet = "";
+
   function afficher() {
     const vue = VUES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "comptes-rendus";
     VUES.forEach((v) => { $(`#vue-${v}`).hidden = v !== vue; });
-    document.querySelectorAll(".nav a").forEach((a) => {
-      a.toggleAttribute("aria-current", a.dataset.vue === vue);
-      if (a.dataset.vue === vue) a.setAttribute("aria-current", "page");
+    document.querySelectorAll(".elt[data-vue]").forEach((a) => {
+      const actif = a.dataset.vue === vue && !(vue === "comptes-rendus" && filtreProjet);
+      a.toggleAttribute("aria-current", actif);
+      if (actif) a.setAttribute("aria-current", "page");
+    });
+    document.querySelectorAll("#raccourcis-projets .elt").forEach((b) => {
+      const actif = vue === "comptes-rendus" && b.dataset.projet === filtreProjet;
+      b.toggleAttribute("aria-current", actif);
+      if (actif) b.setAttribute("aria-current", "page");
     });
     if (vue === "comptes-rendus") chargerComptesRendus();
     if (vue === "projets") chargerProjets();
     if (vue === "reglages") chargerReglages();
   }
   window.addEventListener("hashchange", afficher);
+  document.querySelector('.elt[data-vue="comptes-rendus"]').addEventListener("click", () => { filtreProjet = ""; });
 
-  // ---------- Enregistrement + état ----------
+  // Raccourcis projets dans la barre latérale
+  async function chargerRaccourcis() {
+    const projets = await api("/api/projets");
+    const total = projets.reduce((s, p) => s + p.nb, 0);
+    $("#nb-total").textContent = total || "";
+    $("#raccourcis-projets").innerHTML = projets.map((p) => `
+      <button class="elt" data-projet="${esc(p.nom)}">
+        <span class="icone-dossier">${icone("i-dossier", 15)}</span>
+        <span class="nom">${esc(p.nom)}</span><span class="compte">${p.nb || ""}</span>
+      </button>`).join("");
+  }
+  $("#raccourcis-projets").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-projet]");
+    if (!b) return;
+    filtreProjet = b.dataset.projet;
+    selection = null;
+    if (location.hash !== "#comptes-rendus") location.hash = "#comptes-rendus";
+    afficher();
+  });
+
+  // ============ Enregistrement + état ============
   let etat = null, dernierConnu = null;
 
   function rendreEtat(e) {
     etat = e;
-    const rec = $("#rec");
-    rec.setAttribute("aria-pressed", e.enregistrement);
-    $("#rec-texte").textContent = e.enregistrement ? "Arrêter" : "Enregistrer";
+    $("#rec").setAttribute("aria-pressed", e.enregistrement);
+    $("#rec").setAttribute("aria-label", e.enregistrement ? "Arrêter" : "Enregistrer");
+    $("#rec-texte").textContent = e.enregistrement ? "Arrêter et analyser" : "Enregistrer";
+    $("#enregistreur").classList.toggle("enregistre", e.enregistrement);
     const m = String(Math.floor(e.duree / 60)).padStart(2, "0");
     const s = String(e.duree % 60).padStart(2, "0");
     $("#chrono").textContent = `${m}:${s}`;
 
-    let statut = "Prêt";
-    if (e.enregistrement) statut = "Enregistrement en cours";
+    let statut = "Prêt à enregistrer";
+    if (e.enregistrement) statut = "Enregistrement…";
     else if (e.statut) statut = e.statut + (e.en_attente ? ` · ${e.en_attente} en attente` : "");
-    if (e.erreurs) statut += ` · ${e.erreurs} en erreur`;
+    if (e.erreurs && !e.enregistrement) statut += ` · ${pluriel(e.erreurs, "erreur")}`;
     $("#statut").textContent = statut;
 
     $("#alerte").hidden = e.cle_ok;
 
-    // Nouveau compte rendu terminé : on rafraîchit la liste
-    const cle = e.dernier ? e.dernier.projet + "/" + e.dernier.fichier : null;
-    if (cle && cle !== dernierConnu) {
-      if (dernierConnu !== null && !$("#vue-comptes-rendus").hidden) chargerComptesRendus();
-      dernierConnu = cle;
+    $("#bandeau-maj").hidden = !e.maj;
+    $("#maj-texte").textContent = e.maj_en_cours
+      ? `Mise à jour vers la version ${e.maj}… MiroRecap va se relancer tout seul.`
+      : `MiroRecap ${e.maj} est disponible.`;
+    $("#maj-bouton").hidden = e.maj_en_cours;
+    $("#version-etat").innerHTML = e.maj
+      ? `<div>Version ${esc(e.version)}</div><div class="d">La version ${esc(e.maj)} est disponible</div>`
+      : `<div>Version ${esc(e.version)}</div><div class="d">À jour · vérification toutes les 6 heures</div>`;
+
+    // Un nouveau compte rendu vient d'arriver : on rafraîchit
+    const cle = e.dernier ? e.dernier.projet + "/" + e.dernier.fichier : "";
+    if (dernierConnu !== null && cle !== dernierConnu) {
+      chargerRaccourcis();
+      if (!$("#vue-comptes-rendus").hidden) { selection = null; chargerComptesRendus(); }
     }
-    if (dernierConnu === null) dernierConnu = cle || "";
+    dernierConnu = cle;
   }
 
   async function sonder() {
@@ -441,46 +623,53 @@
   $("#rec").addEventListener("click", async () => {
     try {
       rendreEtat(await api("/api/enregistrement", {}));
-      if (!etat.enregistrement) message("Enregistrement envoyé à l'analyse.");
+      if (!etat.enregistrement) message("Envoyé à l'analyse. Le compte rendu arrive dans quelques minutes.");
     } catch (err) { message("Micro inaccessible : " + err.message); }
   });
 
-  document.querySelectorAll("[data-ouvrir]").forEach((b) =>
-    b.addEventListener("click", () => api("/api/ouvrir", { cible: b.dataset.ouvrir }).catch((e) => message(e.message)))
-  );
+  document.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-ouvrir]");
+    if (b) api("/api/ouvrir", { cible: b.dataset.ouvrir }).catch((e) => message(e.message));
+  });
 
-  // ---------- Comptes rendus ----------
+  // ============ Comptes rendus ============
   let comptesRendus = [], selection = null;
 
   async function chargerComptesRendus() {
     comptesRendus = await api("/api/comptes-rendus");
-    const projets = [...new Set(comptesRendus.map((c) => c.projet))].sort((a, b) => a.localeCompare(b, "fr"));
-    const filtre = $("#filtre-projet");
-    const choix = filtre.value;
-    filtre.innerHTML = `<option value="">Tous les projets</option>` +
-      projets.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
-    if (projets.includes(choix)) filtre.value = choix;
+    $("#titre-liste").textContent = filtreProjet || "Comptes rendus";
     rendreListe();
-    if (!selection && comptesRendus.length) ouvrirCompteRendu(comptesRendus[0]);
+    const visibles = filtrer();
+    if (!selection && visibles.length) ouvrirCompteRendu(visibles[0]);
+    if (!visibles.length) { selection = null; $("#lecteur").innerHTML = `<div class="vide-lecteur"><div>${icone("i-doc", 40)}Choisis un compte rendu</div></div>`; }
+  }
+
+  function filtrer() {
+    const q = $("#recherche").value.trim().toLowerCase();
+    return comptesRendus.filter((c) => (!filtreProjet || c.projet === filtreProjet) && (!q || c.titre.toLowerCase().includes(q)));
   }
 
   function rendreListe() {
-    const q = $("#recherche").value.trim().toLowerCase();
-    const p = $("#filtre-projet").value;
-    const visibles = comptesRendus.filter((c) => (!p || c.projet === p) && (!q || c.titre.toLowerCase().includes(q)));
-    $("#liste-vide").hidden = comptesRendus.length > 0;
-    $("#liste").innerHTML = visibles.map((c, i) => `
-      <li><button data-i="${comptesRendus.indexOf(c)}" aria-current="${selection && selection.projet === c.projet && selection.fichier === c.fichier}">
+    const visibles = filtrer();
+    $("#filtre-actif").textContent = visibles.length ? visibles.length : "";
+    $("#liste-vide").hidden = visibles.length > 0;
+    let html = "", groupe = "";
+    for (const c of visibles) {
+      const g = groupeDate(c.date);
+      if (g !== groupe) { html += `<li class="groupe-date">${esc(g)}</li>`; groupe = g; }
+      const actif = selection && selection.projet === c.projet && selection.fichier === c.fichier;
+      html += `<li><button class="rangee" data-i="${comptesRendus.indexOf(c)}" aria-current="${actif}">
         <span class="t">${esc(c.titre)}</span>
-        <span class="second">${esc(c.projet)} · ${esc(dateLisible(c.date))}</span>
-      </button></li>`).join("");
+        <span class="m">${esc(heure(c.date))} · ${esc(c.projet)}</span>
+      </button></li>`;
+    }
+    $("#liste").innerHTML = html;
   }
   $("#liste").addEventListener("click", (ev) => {
-    const b = ev.target.closest("button[data-i]");
+    const b = ev.target.closest("[data-i]");
     if (b) ouvrirCompteRendu(comptesRendus[+b.dataset.i]);
   });
   $("#recherche").addEventListener("input", rendreListe);
-  $("#filtre-projet").addEventListener("change", rendreListe);
 
   async function ouvrirCompteRendu(c) {
     selection = c;
@@ -490,79 +679,92 @@
     $("#lecteur").innerHTML = `
       <header class="lecteur-tete">
         <h1>${esc(c.titre)}</h1>
-        <p class="second">${esc(c.projet)} · ${esc(dateLisible(c.date))}</p>
+        <p class="meta"><span class="etiquette">${esc(c.projet)}</span><span>${esc(dateLongue(c.date))}</span></p>
         <div class="actions">
-          <button class="btn discret" id="copier">Copier</button>
-          <button class="btn discret" id="finder">Voir dans le Finder</button>
+          <button class="bouton" id="copier">Copier le compte rendu</button>
+          <button class="bouton" id="finder">Afficher dans le Finder</button>
         </div>
       </header>
       <div class="md">${markdown(texte)}</div>`;
     $("#lecteur").scrollTop = 0;
     $("#finder").onclick = () => api("/api/ouvrir", { cible: "compte-rendu", projet: c.projet, fichier: c.fichier });
     $("#copier").onclick = async () => {
-      // Copie le compte rendu sans la transcription complète
       const sansTranscription = texte.split(/\n---\n/)[0];
       try { await navigator.clipboard.writeText(sansTranscription); message("Compte rendu copié."); }
       catch (_) { message("Copie impossible."); }
     };
   }
 
-  // ---------- Projets ----------
+  // ============ Projets ============
+  let projets = [];
+
   async function chargerProjets() {
-    rendreProjets(await api("/api/projets"));
+    projets = await api("/api/projets");
+    rendreProjets();
   }
 
-  function rendreProjets(projets) {
-    $("#liste-projets").innerHTML = projets.map((p) => p.modifiable ? `
-      <form class="projet" data-ancien="${esc(p.nom)}">
-        <div class="entete"><h2>${esc(p.nom)}</h2><span class="second">${p.nb} compte${p.nb > 1 ? "s" : ""} rendu${p.nb > 1 ? "s" : ""}</span></div>
-        <input type="text" name="nom" value="${esc(p.nom)}" aria-label="Nom du projet" required>
-        <textarea name="description" aria-label="Description" placeholder="Description pour aider le classement">${esc(p.description)}</textarea>
-        <div class="ligne-actions"><button class="btn discret" type="submit">Enregistrer</button></div>
-      </form>` : `
-      <div class="projet">
-        <div class="entete"><h2>${esc(p.nom)}</h2><span class="second">${p.nb} compte${p.nb > 1 ? "s" : ""} rendu${p.nb > 1 ? "s" : ""}</span></div>
-        <p class="second">${esc(p.description)}</p>
+  function rendreProjets() {
+    $("#liste-projets").innerHTML = projets.map((p, i) => `
+      <div class="rang ${p.modifiable ? "cliquable" : ""}" ${p.modifiable ? `data-p="${i}" role="button" tabindex="0"` : ""}>
+        <span class="icone-dossier">${icone("i-dossier", 18)}</span>
+        <div class="corps"><div>${esc(p.nom)}</div><div class="d">${esc(p.description || "Sans description")}</div></div>
+        <span class="second">${p.nb}</span>
+        ${p.modifiable ? `<span class="chevron">${icone("i-chevron", 12)}</span>` : ""}
       </div>`).join("");
   }
 
-  $("#liste-projets").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const f = ev.target;
-    try {
-      rendreProjets(await api("/api/projets/modifier", {
-        ancien: f.dataset.ancien, nom: f.nom.value, description: f.description.value,
-      }));
-      message("Projet enregistré.");
-    } catch (err) { message(err.message); }
+  let projetEdite = null;
+  function ouvrirFeuille(p) {
+    projetEdite = p;
+    $("#feuille-titre").textContent = p ? "Modifier le projet" : "Nouveau projet";
+    $("#p-valider").textContent = p ? "Enregistrer" : "Créer";
+    $("#p-nom").value = p ? p.nom : "";
+    $("#p-desc").value = p ? p.description : "";
+    $("#feuille-projet").showModal();
+    $("#p-nom").focus();
+  }
+  $("#nouveau-projet").addEventListener("click", () => ouvrirFeuille(null));
+  $("#liste-projets").addEventListener("click", (ev) => {
+    const r = ev.target.closest("[data-p]");
+    if (r) ouvrirFeuille(projets[+r.dataset.p]);
   });
+  $("#liste-projets").addEventListener("keydown", (ev) => {
+    const r = ev.target.closest("[data-p]");
+    if (r && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); ouvrirFeuille(projets[+r.dataset.p]); }
+  });
+  $("#p-annuler").addEventListener("click", () => $("#feuille-projet").close());
 
   $("#form-projet").addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    const nom = $("#p-nom").value, description = $("#p-desc").value;
     try {
-      rendreProjets(await api("/api/projets", { nom: $("#np-nom").value, description: $("#np-desc").value }));
-      $("#np-nom").value = ""; $("#np-desc").value = "";
-      message("Projet créé.");
+      projets = projetEdite
+        ? await api("/api/projets/modifier", { ancien: projetEdite.nom, nom, description })
+        : await api("/api/projets", { nom, description });
+      $("#feuille-projet").close();
+      rendreProjets();
+      chargerRaccourcis();
+      message(projetEdite ? "Projet enregistré." : "Projet créé.");
     } catch (err) { message(err.message); }
   });
 
-  // ---------- Réglages ----------
+  // ============ Réglages ============
   async function chargerReglages() {
     const r = await api("/api/reglages");
-    $("#cle-etat").textContent = r.cle_definie
-      ? `Clé enregistrée : ${r.cle_apercu}. Colle une nouvelle clé pour la remplacer.`
-      : "Aucune clé enregistrée. Elle se crée sur console.anthropic.com (API Keys), et se paie à l'usage.";
+    $("#cle-point").classList.toggle("ok", r.cle_definie);
+    $("#cle-etat").innerHTML = r.cle_definie
+      ? `<div>Clé enregistrée</div><div class="d">${esc(r.cle_apercu)}</div>`
+      : `<div>Aucune clé</div><div class="d">Les enregistrements ne peuvent pas être analysés</div>`;
     $("#modeles").innerHTML = r.modeles.map((m) => `
-      <label class="modele">
-        <input type="radio" name="modele" value="${esc(m.id)}" ${m.id === r.modele_whisper ? "checked" : ""}>
-        <span class="nom">${esc(m.nom)}</span>
-        <span class="second">${esc(m.detail)}</span>
-      </label>`).join("");
-    $("#dossier-actuel").textContent = "Actuellement : " + r.dossier_actuel;
+      <div class="rang cliquable" role="radio" tabindex="0" data-modele="${esc(m.id)}" aria-checked="${m.id === r.modele_whisper}">
+        <div class="corps"><div>${esc(m.nom)}</div><div class="d">${esc(m.detail)}</div></div>
+        <span class="coche">${icone("i-coche", 15)}</span>
+      </div>`).join("");
+    $("#dossier-actuel").textContent = r.dossier_actuel;
     $("#dossier").value = r.dossier_personnalise;
-    $("#erreurs-etat").textContent = r.erreurs
-      ? `${r.erreurs} fichier${r.erreurs > 1 ? "s n'ont" : " n'a"} pas pu être traité${r.erreurs > 1 ? "s" : ""}. L'audio est conservé.`
-      : "Aucune erreur.";
+    $("#erreurs-etat").innerHTML = r.erreurs
+      ? `<div>${pluriel(r.erreurs, "fichier")} en erreur</div><div class="d">L'audio est conservé, tu peux relancer</div>`
+      : `<div>Aucune erreur</div><div class="d">Tout a été traité</div>`;
     $("#relancer").hidden = !r.erreurs;
   }
 
@@ -578,9 +780,17 @@
     } catch (err) { message(err.message); }
   });
 
-  $("#modeles").addEventListener("change", async (ev) => {
-    try { await api("/api/reglages", { modele_whisper: ev.target.value }); message("Modèle changé. Il se télécharge au prochain enregistrement."); }
-    catch (err) { message(err.message); }
+  async function choisirModele(r) {
+    try {
+      await api("/api/reglages", { modele_whisper: r.dataset.modele });
+      document.querySelectorAll("[data-modele]").forEach((x) => x.setAttribute("aria-checked", x === r));
+      message("Modèle changé. Il se télécharge au prochain enregistrement.");
+    } catch (err) { message(err.message); }
+  }
+  $("#modeles").addEventListener("click", (ev) => { const r = ev.target.closest("[data-modele]"); if (r) choisirModele(r); });
+  $("#modeles").addEventListener("keydown", (ev) => {
+    const r = ev.target.closest("[data-modele]");
+    if (r && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); choisirModele(r); }
   });
 
   $("#form-dossier").addEventListener("submit", async (ev) => {
@@ -594,13 +804,27 @@
   $("#relancer").addEventListener("click", async () => {
     try {
       const r = await api("/api/erreurs/relancer", {});
-      message(`${r.relances} fichier(s) remis en traitement.`);
+      message(`${pluriel(r.relances, "fichier")} remis en traitement.`);
       chargerReglages();
     } catch (err) { message(err.message); }
   });
 
-  // ---------- Démarrage ----------
+  $("#maj-bouton").addEventListener("click", async () => {
+    try { await api("/api/maj", {}); message("Mise à jour lancée. Ça prend quelques minutes."); sonder(); }
+    catch (err) { message(err.message); }
+  });
+
+  $("#verifier-maj").addEventListener("click", async () => {
+    try {
+      const e = await api("/api/maj/verifier", {});
+      rendreEtat(e);
+      message(e.maj ? `Version ${e.maj} disponible.` : "Tu as la dernière version.");
+    } catch (err) { message(err.message); }
+  });
+
+  // ============ Démarrage ============
   sonder();
+  chargerRaccourcis();
   afficher();
 </script>
 </body>

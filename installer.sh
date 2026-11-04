@@ -7,7 +7,7 @@ DEST="$HOME/Library/Application Support/MiroRecap"
 BUNDLE="$HOME/Applications/MiroRecap.app"
 PLIST="$HOME/Library/LaunchAgents/fr.mirorecap.app.plist"
 
-echo "🎙  Installation de MiroRecap…"
+echo "🎙  Installation de MiroRecap $(cat app/VERSION 2>/dev/null)…"
 
 # 1. Mac Apple Silicon obligatoire (Whisper tourne sur la puce)
 if [ "$(uname -m)" != "arm64" ]; then
@@ -33,7 +33,7 @@ PY="$(brew --prefix python@3.12)/bin/python3.12"
 
 # 4. Arrête une éventuelle version en cours
 launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true
-pkill -f "compte-rendu/app.py|CompteRendu/app.py|MiroRecap/app.py" 2>/dev/null || true
+pkill -f "compte-rendu/app.py|CompteRendu/app.py|MiroRecap/app.py|MiroRecap/fenetre.py" 2>/dev/null || true
 
 # Ancienne version "CompteRendu" : on récupère la clé API puis on la retire
 ANCIEN="$HOME/Library/Application Support/CompteRendu"
@@ -46,7 +46,7 @@ rm -rf "$ANCIEN" "$HOME/Applications/CompteRendu.app" "$HOME/Library/LaunchAgent
 # 5. Code + environnement Python
 echo "→ Installation des modules Python (quelques minutes)…"
 mkdir -p "$DEST"
-cp app/app.py app/fenetre.py app/requirements.txt "$DEST/"
+cp app/app.py app/fenetre.py app/requirements.txt app/VERSION "$DEST/"
 rm -rf "$DEST/ui" && cp -R app/ui "$DEST/ui"
 [ -x "$DEST/.venv/bin/python" ] || "$PY" -m venv "$DEST/.venv"
 "$DEST/.venv/bin/pip" install --upgrade pip -q
@@ -57,7 +57,8 @@ echo "→ Création de l'app…"
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS"
 clang -O2 -o "$BUNDLE/Contents/MacOS/MiroRecap" app/lanceur.c
-cat > "$BUNDLE/Contents/Info.plist" <<'EOF'
+VERSION="$(tr -d '[:space:]' < app/VERSION)"
+cat > "$BUNDLE/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -67,8 +68,8 @@ cat > "$BUNDLE/Contents/Info.plist" <<'EOF'
   <key>CFBundleIdentifier</key><string>fr.mirorecap.app</string>
   <key>CFBundleExecutable</key><string>MiroRecap</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>3.0</string>
-  <key>CFBundleVersion</key><string>3.0</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>13.5</string>
   <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>MiroRecap enregistre tes appels et réunions pour les transcrire.</string>
