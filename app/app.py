@@ -89,6 +89,8 @@ CONFIG_DEFAUT = {
     "accueil_fait": False,   # assistant de bienvenue terminé
     # Quand un appel commence (micro utilisé par une autre app) : "proposer", "auto" ou "rien"
     "detection_appels": "proposer",
+    # Noms propres, marques, jargon : aide Whisper à les reconnaître
+    "vocabulaire": "",
     "modele_claude": "claude-sonnet-5-5",
     # Moteur d'analyse : "auto" (abonnement si Claude Code est installé, sinon clé API),
     # "abonnement" (Claude Code, compte Claude Pro/Max) ou "api" (clé API Anthropic)
@@ -659,7 +661,7 @@ def texte_progression():
 
 
 # Avancement du traitement en cours, affiché dans la fenêtre (ligne grisée + barre en haut)
-TRAITEMENT = {"etape": "", "progression": None, "duree_audio": 0, "debut": "", "date": ""}
+TRAITEMENT = {"etape": "", "progression": None, "duree_audio": 0, "debut": "", "date": "", "amelioration": ""}
 
 
 class _SuiviTranscription:
@@ -682,7 +684,50 @@ class _SuiviTranscription:
         pass
 
 
-def transcrire(chemin_audio):
+# Phrases que Whisper invente sur les silences (apprises des sous-titres de vidéos)
+PHRASES_PARASITES = re.compile(
+    r"sous-titr|amara\.org|merci d'avoir regard|abonnez-vous|n'oubliez pas de (vous abonner|liker)|"
+    r"radio-canada|transcription par|thanks for watching|subtitles by|♪", re.I)
+
+
+def consigne_whisper():
+    """Texte d'amorce pour Whisper : vocabulaire de l'utilisateur + noms des projets.
+    Whisper écrit alors ces mots correctement quand il les entend."""
+    mots = [m.strip() for m in re.split(r"[,;\n]", CONFIG.get("vocabulaire", "")) if m.strip()]
+    try:
+        mots += [nom for nom in lister_projets()]
+    except Exception:
+        pass
+    vus, uniques = set(), []
+    for m in mots:
+        if m.lower() not in vus:
+            vus.add(m.lower())
+            uniques.append(m)
+    texte = ", ".join(uniques)[:600]   # Whisper n'en lit qu'environ 220 jetons
+    return f"Appel professionnel en français. Vocabulaire : {texte}." if texte else None
+
+
+def nettoyer_segments(segments):
+    """Retire les phrases parasites et les répétitions en boucle typiques de Whisper."""
+    propres, precedent, repetitions = [], None, 0
+    for seg in segments:
+        texte = seg["text"].strip()
+        if not texte or PHRASES_PARASITES.search(texte):
+            continue
+        if seg.get("no_speech_prob", 0) > 0.8 and seg.get("avg_logprob", 0) < -1.0:
+            continue   # probablement du silence ou du bruit
+        if texte == precedent:
+            repetitions += 1
+            if repetitions >= 1:
+                continue   # même phrase répétée : boucle de Whisper
+        else:
+            repetitions = 0
+        precedent = texte
+        propres.append(seg)
+    return propres
+
+
+def transcrire(chemin_audio, modele=None):
     """Retourne la transcription horodatée : '[mm:ss] texte' par ligne.
     Au premier usage d'un modèle, ses fichiers sont téléchargés (~/.cache/huggingface)."""
     import tempfile
@@ -707,12 +752,14 @@ def transcrire(chemin_audio):
         module.tqdm = types.SimpleNamespace(tqdm=_SuiviTranscription)
     resultat = mlx_whisper.transcribe(
         audio,
-        path_or_hf_repo=str(assurer_modele()),
+        path_or_hf_repo=str(assurer_modele(modele)),
         language=CONFIG["langue"],
-        verbose=False,   # active le suivi (sans rien afficher)
+        verbose=False,                      # active le suivi (sans rien afficher)
+        initial_prompt=consigne_whisper(),  # vocabulaire et noms des projets
+        condition_on_previous_text=False,   # évite les boucles et les phrases inventées en série
     )
     lignes = []
-    for seg in resultat.get("segments", []):
+    for seg in nettoyer_segments(resultat.get("segments", [])):
         texte = seg["text"].strip()
         if texte:
             m, s = divmod(int(seg["start"]), 60)
@@ -1416,7 +1463,7 @@ def section_mail(analyse):
         entete += f"**À** : {analyse['mail_destinataire'].strip()}\n"
     if str(analyse.get("mail_objet") or "").strip():
         entete += f"**Objet** : {analyse['mail_objet'].strip()}\n"
-    return f"## Mail à envoyer\n\n{entete}\n{corps}\n\n"
+    return f"## Mail à envoyer\n\n{entete + chr(10) if entete else ''}{corps}\n\n"
 
 
 def ranger(chemin_audio, date, transcription, analyse):
@@ -1428,18 +1475,119 @@ def ranger(chemin_audio, date, transcription, analyse):
     shutil.move(str(chemin_audio), str(audio_final))
 
     md = chemin_libre(dossier / f"{base}.md")
-    md.write_text(
+    ligne_audio = f"[audio/{audio_final.name}](audio/{audio_final.name})"
+    md.write_text(contenu_compte_rendu(date, transcription, analyse, ligne_audio), encoding="utf-8")
+    return md
+
+
+def contenu_compte_rendu(date, transcription, analyse, ligne_audio, note=""):
+    return (
         f"# {analyse['titre']}\n\n"
         f"- **Date** : {date:%d/%m/%Y à %H:%M}\n"
         f"- **Projet** : {analyse['projet']}\n"
-        f"- **Audio** : [audio/{audio_final.name}](audio/{audio_final.name})\n\n"
-        f"{analyse['compte_rendu'].strip()}\n\n"
+        f"- **Audio** : {ligne_audio}\n"
+        + (f"- **Transcription** : {note}\n" if note else "")
+        + f"\n{analyse['compte_rendu'].strip()}\n\n"
         + section_mail(analyse)
         + (f"## Contexte pour Claude\n\n```xml\n{analyse['contexte_claude'].strip()}\n```\n\n" if analyse.get("contexte_claude") else "")
-        + f"---\n\n## Transcription complète\n\n{transcription}\n",
-        encoding="utf-8",
+        + f"---\n\n## Transcription complète\n\n{transcription}\n"
     )
-    return md
+
+
+# ---------------------------------------------------------------------------
+# Amélioration d'un compte rendu existant
+# ---------------------------------------------------------------------------
+
+MODELE_PRO = "mlx-community/whisper-large-v3-mlx"
+
+
+def decouper(texte, taille=9000):
+    """Découpe une transcription en morceaux de lignes entières (pour la correction par l'IA)."""
+    morceaux, courant = [], ""
+    for ligne in texte.splitlines(keepends=True):
+        if courant and len(courant) + len(ligne) > taille:
+            morceaux.append(courant)
+            courant = ""
+        courant += ligne
+    if courant.strip():
+        morceaux.append(courant)
+    return morceaux
+
+
+def corriger_transcription(transcription, projet=""):
+    """L'IA corrige les mots mal reconnus, sans résumer ni reformuler, horodatages gardés."""
+    profil = bloc_profil()
+    vocabulaire = consigne_whisper() or ""
+    systeme = f"""Tu corriges une transcription automatique (Whisper) d'un appel professionnel en français.
+Corrige UNIQUEMENT les erreurs de reconnaissance vocale : mots mal entendus, noms propres mal écrits
+(clients, entreprises, marques, outils), chiffres et montants mal transcrits, ponctuation.
+Règles strictes :
+- ne résume pas, ne reformule pas, n'ajoute rien, ne supprime aucune information ;
+- garde exactement une ligne par ligne d'origine et son horodatage [mm:ss] au début ;
+- supprime seulement les phrases manifestement parasites (« sous-titres réalisés par… », répétitions en boucle) ;
+- si tu n'es pas sûr d'une correction, laisse le mot tel quel ;
+- réponds uniquement par la transcription corrigée, sans commentaire.
+
+Projet concerné : {projet or "inconnu"}
+{vocabulaire}
+{("Contexte sur l'utilisateur :" + chr(10) + profil) if profil else ""}"""
+    corrige = []
+    for morceau in decouper(transcription):
+        reponse = appeler_ia_texte(systeme, morceau).strip()
+        reponse = re.sub(r"^```\w*\n|\n```$", "", reponse).strip()
+        # Garde-fou : une réponse trop courte serait un résumé, on garde alors l'original
+        if len(reponse) < 0.6 * len(morceau.strip()):
+            print("Correction ignorée pour un morceau (réponse trop courte)", flush=True)
+            reponse = morceau.strip()
+        corrige.append(reponse)
+    return "\n".join(corrige)
+
+
+def lire_parties_compte_rendu(md):
+    """(date, ligne audio, transcription) d'un compte rendu existant."""
+    texte = md.read_text(encoding="utf-8")
+    m = MOTIF_DATE.match(md.name)
+    date = dt.datetime(*map(int, m.groups())) if m else dt.datetime.fromtimestamp(md.stat().st_mtime)
+    audio = re.search(r"^- \*\*Audio\*\* : (.*)$", texte, flags=re.M)
+    parties = re.split(r"\n## Transcription complète\s*\n", texte, maxsplit=1)
+    transcription = parties[1].strip() if len(parties) == 2 else ""
+    return date, (audio.group(1).strip() if audio else "non conservé"), transcription
+
+
+def ameliorer_compte_rendu(projet, fichier, mode):
+    """mode « corriger » : correction IA de la transcription existante.
+    mode « pro » : nouvelle transcription avec le modèle Pro puis correction IA.
+    Le compte rendu est ensuite réécrit à partir de la transcription améliorée."""
+    md = chemin_compte_rendu(projet, fichier)
+    date, ligne_audio, transcription = lire_parties_compte_rendu(md)
+    etapes = []
+    if mode == "pro":
+        audio = audio_du_compte_rendu(md)
+        if not audio:
+            raise ValueError("l'audio de ce compte rendu n'existe plus : seule la correction par l'IA est possible")
+        TRAITEMENT.update(etape="transcription", progression=0.0)
+        transcription = transcrire(audio, MODELE_PRO)
+        etapes.append("retranscrite avec le modèle Pro")
+    if not transcription.strip():
+        raise ValueError("pas de transcription à améliorer")
+    TRAITEMENT.update(etape="correction", progression=None)
+    transcription = corriger_transcription(transcription, projet)
+    etapes.append("corrigée par l'IA")
+    TRAITEMENT.update(etape="analyse", progression=None)
+    analyse = analyser(transcription, date)
+    if projet != PROJET_PAR_DEFAUT:
+        analyse["projet"] = projet   # on garde le classement choisi
+    note = f"{' puis '.join(etapes)} le {dt.datetime.now():%d/%m/%Y}"
+    contenu = contenu_compte_rendu(date, transcription, analyse, ligne_audio, note)
+    if analyse["projet"] == projet:
+        md.write_text(contenu, encoding="utf-8")
+        return {"projet": projet, "fichier": md.name, "titre": analyse["titre"]}
+    # Reclassé (venait de Divers) : on déplace d'abord, puis on réécrit
+    deplace = deplacer_compte_rendu(projet, fichier, analyse["projet"])
+    cible = dossier_projet(deplace["projet"]) / deplace["fichier"]
+    _, ligne_audio, _ = lire_parties_compte_rendu(cible)
+    cible.write_text(contenu_compte_rendu(date, transcription, analyse, ligne_audio, note), encoding="utf-8")
+    return {"projet": deplace["projet"], "fichier": cible.name, "titre": analyse["titre"]}
 
 
 # ---------------------------------------------------------------------------
@@ -1813,6 +1961,7 @@ def lire_reglages():
         "modele_choisi": bool(CONFIG.get("modele_choisi")),
         "mcp_installe": mcp_installe(),
         "detection_appels": CONFIG.get("detection_appels", "proposer"),
+        "vocabulaire": CONFIG.get("vocabulaire", ""),
     }
 
 
@@ -1822,7 +1971,7 @@ def sauver_reglages(donnees):
         CONFIG["cle_api_anthropic"] = donnees["cle"].strip()
     if donnees.get("cle_openai", "").strip():
         CONFIG["cle_api_openai"] = donnees["cle_openai"].strip()
-    for champ in ("contexte_perso", "signature_mail"):
+    for champ in ("contexte_perso", "signature_mail", "vocabulaire"):
         if isinstance(donnees.get(champ), str):
             CONFIG[champ] = donnees[champ].strip()[:4000]
     if donnees.get("accueil_fait") is True:
@@ -1943,6 +2092,8 @@ class Api(http.server.BaseHTTPRequestHandler):
                 return self._json(200, tester_micro())
             if self.path == "/api/test-son":
                 return self._json(200, tester_son_systeme())
+            if self.path == "/api/ameliorer":
+                return self._json(200, self.app.demander_amelioration(d.get("projet", ""), d.get("fichier", ""), d.get("mode", "")))
             if self.path == "/api/mail":
                 return self._json(200, ouvrir_dans_mail(d.get("projet", ""), d.get("fichier", "")))
             if self.path == "/api/rappels":
@@ -2046,7 +2197,8 @@ class App(rumps.App):
         self.derniere_erreur = ""        # message de la dernière erreur de traitement
         self.maj_en_cours = False
         self.maj_progression = {"phase": "", "fait": 0, "total": 0}   # téléchargement
-        self.maj_infos = None            # comment installer la nouvelle version (derniere_release)
+        self.maj_infos = None
+        self.derniere_amelioration = None            # comment installer la nouvelle version (derniere_release)
         self._compteur = 0
 
         self.bouton = rumps.MenuItem("Démarrer l'enregistrement", callback=lambda _: self.basculer_enregistrement())
@@ -2151,6 +2303,7 @@ class App(rumps.App):
             "choix_modele": not CONFIG.get("modele_choisi"),
             "accueil": not CONFIG.get("accueil_fait"),
             "traitement": dict(TRAITEMENT) if TRAITEMENT["etape"] else None,
+            "derniere_amelioration": self.derniere_amelioration,
             "appel_detecte": (self.detecteur.appel if getattr(self, "detecteur", None) and not self.enreg.actif else None),
             "son_systeme": SON_SYSTEME,
         }
@@ -2495,9 +2648,40 @@ class App(rumps.App):
 
     # --- Traitement (thread de fond) ------------------------------------------
 
+    def traiter_amelioration(self, tache):
+        TRAITEMENT.update(etape="preparation", progression=None, duree_audio=0, amelioration=tache["fichier"],
+                          debut=dt.datetime.now().isoformat(timespec="seconds"), date="")
+        self.statut = "Amélioration…"
+        try:
+            r = ameliorer_compte_rendu(tache["projet"], tache["fichier"], tache["mode"])
+            self.dernier = {"projet": r["projet"], "fichier": r["fichier"], "titre": r["titre"]}
+            self.derniere_amelioration = {"ok": True, **r}
+            notifier("Compte rendu amélioré", r["titre"])
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.derniere_amelioration = {"ok": False, "erreur": str(e), "fichier": tache["fichier"]}
+            notifier("Amélioration impossible", str(e))
+        finally:
+            TRAITEMENT.update(etape="", progression=None, amelioration="")
+            self.statut = ""
+
+    def demander_amelioration(self, projet, fichier, mode):
+        if mode not in ("corriger", "pro"):
+            raise ValueError("mode inconnu")
+        chemin_compte_rendu(projet, fichier)   # vérifie que le fichier existe
+        if not moteur_effectif():
+            raise ValueError("aucun moteur d'analyse prêt (Réglages → Analyse par l'IA)")
+        self.file_traitement.put({"projet": projet, "fichier": fichier, "mode": mode})
+        return {"ok": True, "en_attente": self.file_traitement.qsize()}
+
     def travailleur(self):
         while True:
-            chemin, date = self.file_traitement.get()
+            tache = self.file_traitement.get()
+            if isinstance(tache, dict):          # amélioration d'un compte rendu existant
+                self.traiter_amelioration(tache)
+                continue
+            chemin, date = tache
             transcription = None
             TRAITEMENT.update(etape="preparation", progression=None, duree_audio=0,
                               debut=dt.datetime.now().isoformat(timespec="seconds"),

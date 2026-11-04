@@ -280,7 +280,10 @@
   dialog label { font-weight: 500; margin-top: 4px; }
   dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
   dialog .supprimer-info { color: var(--second); font-size: 11px; }
-  #accueil { width: 480px; }
+  #accueil, #feuille-ameliorer { width: 480px; }
+  #feuille-ameliorer .d { white-space: normal; }
+  #feuille-ameliorer .petit { font-size: 11px; margin-top: 8px; }
+  #feuille-ameliorer .rang[aria-disabled="true"] { opacity: .45; pointer-events: none; }
   #accueil h2 { margin: 6px 0 2px; }
   #accueil .d { white-space: normal; }
   #accueil .petit { font-size: 11px; margin-top: 6px; }
@@ -633,6 +636,13 @@
         <p class="titre-groupe">Transcription</p>
         <div id="modeles" class="groupe" role="radiogroup" aria-label="Modèle Whisper"></div>
         <p class="note">Whisper tourne sur ton Mac, l'audio ne quitte pas ta machine. Le modèle choisi se télécharge une seule fois.</p>
+        <form id="form-vocabulaire" class="groupe contexte" style="margin-top:10px">
+          <div class="rang colonne">
+            <label for="vocabulaire">Vocabulaire</label>
+            <textarea id="vocabulaire" rows="3" placeholder="Noms de clients, marques, outils, jargon, séparés par des virgules. Ex : Webflow, Client-First, Shopify, Boulangerie Martin, Figma"></textarea>
+          </div>
+          <div class="rang"><div class="corps"><div class="d">Whisper écrit ces mots correctement quand il les entend. Les noms de tes projets sont ajoutés automatiquement.</div></div><button class="bouton principal" type="submit">Enregistrer</button></div>
+        </form>
 
         <p class="titre-groupe">Enregistrement</p>
         <div class="groupe">
@@ -714,6 +724,29 @@
     <div class="actions">
       <button class="bouton" type="button" id="p-annuler">Annuler</button>
       <button class="bouton principal" type="submit" id="p-valider">Créer</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Améliorer la transcription d'un compte rendu -->
+<dialog id="feuille-ameliorer" aria-labelledby="am-titre">
+  <form method="dialog">
+    <h2 id="am-titre">Améliorer la transcription</h2>
+    <p class="d">Corrige les mots mal reconnus (noms, chiffres, jargon) puis réécrit le compte rendu. L'ancien texte est remplacé.</p>
+    <div class="groupe" role="radiogroup" aria-label="Méthode">
+      <div class="rang cliquable" role="radio" tabindex="0" data-am="corriger" aria-checked="true">
+        <div class="corps"><div>Corriger avec l'IA</div><div class="d">Rapide. L'IA relit la transcription avec ton contexte et ton vocabulaire, sans rien résumer.</div></div>
+        <span class="coche"><svg width="15" height="15"><use href="#i-coche"/></svg></span>
+      </div>
+      <div class="rang cliquable" role="radio" tabindex="0" data-am="pro" aria-checked="false" id="am-pro">
+        <div class="corps"><div>Retranscrire avec le modèle Pro, puis corriger</div><div class="d" id="am-pro-detail">Le plus précis. Plus long, et télécharge le modèle Pro (environ 3 Go) la première fois.</div></div>
+        <span class="coche"><svg width="15" height="15"><use href="#i-coche"/></svg></span>
+      </div>
+    </div>
+    <p class="d petit">Astuce : ajoute les noms de tes clients et ton jargon dans Réglages → Transcription → Vocabulaire.</p>
+    <div class="actions">
+      <button class="bouton" type="button" id="am-annuler">Annuler</button>
+      <button class="bouton principal" type="submit" id="am-valider">Améliorer</button>
     </div>
   </form>
 </dialog>
@@ -979,7 +1012,9 @@
     $("#barre-haut").hidden = !tr;
     if (tr) {
       const etapes = { preparation: "Préparation de l'audio…", modele: "Téléchargement du modèle de transcription…",
-                       transcription: "Transcription", analyse: "Rédaction du compte rendu…" };
+                       transcription: "Transcription", analyse: "Rédaction du compte rendu…",
+                       correction: "Correction de la transcription par l'IA…" };
+      $("#en-cours .t").textContent = tr.amelioration ? "Amélioration en cours" : "Nouvel enregistrement";
       const pct = tr.progression == null ? null : Math.round(tr.progression * 100);
       const duree = tr.duree_audio ? ` · ${Math.max(1, Math.round(tr.duree_audio / 60))} min d'audio` : "";
       $("#en-cours-etape").textContent = (pct == null ? etapes[tr.etape] : `${etapes[tr.etape]} · ${pct} %`) + duree
@@ -1017,6 +1052,15 @@
     $("#version-etat").innerHTML = e.maj
       ? `<div>Version ${esc(e.version)}</div><div class="d">La version ${esc(e.maj)} est disponible</div>`
       : `<div>Version ${esc(e.version)}</div><div class="d">À jour · vérification toutes les heures</div>`;
+
+    // Amélioration terminée : on rouvre le compte rendu concerné
+    const am = e.derniere_amelioration;
+    const cleAm = am ? JSON.stringify(am) : "";
+    if (am && cleAm !== window.derniereAmVue) {
+      if (window.derniereAmVue !== undefined && am.ok) { selection = { projet: am.projet, fichier: am.fichier }; message("Compte rendu amélioré."); }
+      if (window.derniereAmVue !== undefined && !am.ok) message("Amélioration impossible : " + am.erreur);
+    }
+    window.derniereAmVue = cleAm;
 
     // Un nouveau compte rendu vient d'arriver : on rafraîchit
     const cle = e.dernier ? e.dernier.projet + "/" + e.dernier.fichier : "";
@@ -1163,6 +1207,7 @@
           ${/\n## Mail à envoyer\n/.test(texte) ? '<button class="bouton" id="ouvrir-mail">Ouvrir dans Mail</button><button class="bouton" id="copier-mail">Copier le mail</button>' : ""}
           ${/\n## Actions à faire\n/.test(texte) ? '<button class="bouton" id="vers-rappels">Ajouter à Rappels</button>' : ""}
           <button class="bouton" id="copier">Copier le compte rendu</button>
+          <button class="bouton" id="ameliorer">Améliorer la transcription</button>
           <button class="bouton" id="finder">Afficher dans le Finder</button>
           ${aAudio ? '<button class="bouton danger" id="suppr-audio">Supprimer l\'audio</button>' : ""}
           <button class="bouton danger" id="suppr-cr">Supprimer</button>
@@ -1170,6 +1215,7 @@
       </header>
       <div class="md">${markdown(texte)}</div>`;
     $("#lecteur").scrollTop = 0;
+    $("#ameliorer").onclick = () => ouvrirAmelioration(c, aAudio);
     $("#finder").onclick = () => api("/api/ouvrir", { cible: "compte-rendu", projet: c.projet, fichier: c.fichier });
     // Bloc de contexte compact pour Claude (ou, pour les anciens comptes rendus, le compte rendu sans la transcription)
     $("#copier-claude").onclick = async () => {
@@ -1389,6 +1435,7 @@
     // Ton contexte (sans écraser une saisie en cours)
     if (document.activeElement !== $("#contexte-perso")) $("#contexte-perso").value = r.contexte_perso || "";
     if (document.activeElement !== $("#signature-mail")) $("#signature-mail").value = r.signature_mail || "";
+    if (document.activeElement !== $("#vocabulaire")) $("#vocabulaire").value = r.vocabulaire || "";
     $("#cc-connecter").hidden = r.claude_connecte || enCours;
     $("#cc-deconnecter").hidden = !r.claude_connecte || enCours;
     // Pendant la connexion, on rafraîchit l'état toutes les 2 secondes
@@ -1536,6 +1583,11 @@
     try { await api("/api/reglages", { cle_openai: cle }); $("#cle-openai").value = ""; message("Clé OpenAI enregistrée."); chargerReglages(); sonder(); }
     catch (err) { message(err.message); }
   });
+  $("#form-vocabulaire").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try { await api("/api/reglages", { vocabulaire: $("#vocabulaire").value }); message("Vocabulaire enregistré : il servira dès la prochaine transcription."); }
+    catch (err) { message(err.message); }
+  });
   $("#form-contexte").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     try {
@@ -1619,6 +1671,37 @@
       const e = await api("/api/maj/verifier", {});
       rendreEtat(e);
       message(e.maj ? `Version ${e.maj} disponible.` : "Tu as la dernière version.");
+    } catch (err) { message(err.message); }
+  });
+
+  // ============ Améliorer la transcription ============
+  let cibleAmelioration = null, modeAmelioration = "corriger";
+  function ouvrirAmelioration(c, aAudio) {
+    cibleAmelioration = c;
+    modeAmelioration = "corriger";
+    document.querySelectorAll("[data-am]").forEach((x) => x.setAttribute("aria-checked", x.dataset.am === "corriger"));
+    $("#am-pro").setAttribute("aria-disabled", !aAudio);
+    $("#am-pro-detail").textContent = aAudio
+      ? "Le plus précis. Plus long, et télécharge le modèle Pro (environ 3 Go) la première fois."
+      : "Indisponible : l'audio de ce compte rendu a été supprimé.";
+    $("#feuille-ameliorer").showModal();
+    $("#am-valider").focus();
+  }
+  $("#feuille-ameliorer").addEventListener("click", (ev) => {
+    const r = ev.target.closest("[data-am]");
+    if (!r || r.getAttribute("aria-disabled") === "true") return;
+    modeAmelioration = r.dataset.am;
+    document.querySelectorAll("[data-am]").forEach((x) => x.setAttribute("aria-checked", x === r));
+  });
+  $("#am-annuler").addEventListener("click", () => $("#feuille-ameliorer").close());
+  $("#am-valider").addEventListener("click", async (ev) => {
+    ev.preventDefault();
+    const c = cibleAmelioration;
+    try {
+      const r = await api("/api/ameliorer", { projet: c.projet, fichier: c.fichier, mode: modeAmelioration });
+      $("#feuille-ameliorer").close();
+      message(r.en_attente > 1 ? "Amélioration ajoutée à la file d'attente." : "Amélioration lancée : suis l'avancement en haut de la liste.");
+      sonder();
     } catch (err) { message(err.message); }
   });
 
