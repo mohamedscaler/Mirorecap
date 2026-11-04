@@ -132,7 +132,7 @@ int main(int argc, const char *argv[]) {
                                                               excludingWindows:@[]];
             SCStreamConfiguration *config = [SCStreamConfiguration new];
             config.capturesAudio = YES;
-            config.excludesCurrentProcessAudio = YES;
+            config.excludesCurrentProcessAudio = NO;   // le test joue un son depuis l'app : il doit être capté
             config.sampleRate = 48000;
             config.channelCount = 1;
             // Image minuscule et 1 image/s : coût négligeable (elle n'est pas lue)
