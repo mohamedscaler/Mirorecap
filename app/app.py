@@ -493,7 +493,7 @@ def env_claude_code():
 
 
 CONNEXION = {"etat": "", "message": "", "url": ""}   # suivi affiché dans les Réglages
-SESSION_CONNEXION = {"maitre": None, "proc": None}  # terminal de « claude setup-token » en cours
+SESSION_CONNEXION = {"maitre": None, "proc": None, "code_envoye": 0}  # terminal de « claude setup-token » en cours
 
 
 def connecter_claude_code():
@@ -530,7 +530,15 @@ def connecter_claude_code():
             os.close(esclave)
             SESSION_CONNEXION.update(maitre=maitre, proc=proc)
             sortie, fin = b"", time.time() + 900
+            texte = ""
             while time.time() < fin:
+                # Code envoyé mais aucun jeton 45 s après : on arrête et on montre la réponse de Claude Code
+                envoye = SESSION_CONNEXION["code_envoye"]
+                if envoye and time.time() - envoye > 45:
+                    lignes = [l.strip() for l in texte.replace("\r", "\n").split("\n") if l.strip()]
+                    print("setup-token, fin de sortie :\n" + "\n".join(lignes[-8:]), flush=True)
+                    dernier = next((l for l in reversed(lignes) if "*" not in l and len(l) > 3), "pas de réponse")
+                    raise RuntimeError(f"le code n'a pas été accepté ({dernier[:160]})")
                 pret, _, _ = select.select([maitre], [], [], 1)
                 if pret:
                     try:
@@ -550,6 +558,7 @@ def connecter_claude_code():
                     if "Press Enter to retry" in texte:
                         os.write(maitre, b"\r")
                         sortie = b""
+                        SESSION_CONNEXION["code_envoye"] = 0
                         CONNEXION.update(url="", message="Code refusé ou expiré. Reconnecte-toi dans la page "
                                                          "qui vient de s'ouvrir et colle le nouveau code.")
                         continue
@@ -564,7 +573,7 @@ def connecter_claude_code():
                 elif proc.poll() is not None:
                     break
             proc.terminate()
-            SESSION_CONNEXION.update(maitre=None, proc=None)
+            SESSION_CONNEXION.update(maitre=None, proc=None, code_envoye=0)
             os.close(maitre)
             if CONNEXION["etat"] == "annule":
                 CONNEXION.update(etat="", message="", url="")
@@ -572,6 +581,10 @@ def connecter_claude_code():
             if CONNEXION["etat"] != "ok":
                 raise RuntimeError("connexion non terminée (fenêtre du navigateur fermée ou délai dépassé)")
         except Exception as e:
+            proc_en_cours = SESSION_CONNEXION.get("proc")
+            if proc_en_cours and proc_en_cours.poll() is None:
+                proc_en_cours.terminate()
+            SESSION_CONNEXION.update(maitre=None, proc=None, code_envoye=0)
             print(f"Connexion Claude Code : {e}", flush=True)
             CONNEXION.update(etat="echec", message=f"Échec : {e}")
 
@@ -581,12 +594,22 @@ def connecter_claude_code():
 def envoyer_code_claude(code):
     """Transmet à « claude setup-token » le code affiché par le navigateur après la connexion."""
     code = (code or "").strip()
+    # Jeton collé directement (obtenu avec « claude setup-token » dans le Terminal)
+    if re.fullmatch(r"sk-ant-oat[0-9A-Za-z_\-]+", code):
+        CONFIG["jeton_claude_code"] = code
+        sauver_config(CONFIG)
+        annuler_connexion_claude()
+        CONNEXION.update(etat="ok", message="Connecté à ton abonnement Claude.", url="")
+        return
     maitre = SESSION_CONNEXION["maitre"]
     if not code:
         raise ValueError("colle le code affiché dans le navigateur")
     if maitre is None:
         raise ValueError("aucune connexion en cours, clique d'abord sur Se connecter")
-    os.write(maitre, code.encode() + b"\r")
+    os.write(maitre, code.encode())
+    time.sleep(0.3)                      # le code puis Entrée séparément, comme au clavier
+    os.write(maitre, b"\r")
+    SESSION_CONNEXION["code_envoye"] = time.time()
     CONNEXION["message"] = "Vérification du code…"
 
 
