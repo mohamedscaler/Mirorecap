@@ -265,7 +265,9 @@ def ouvrir_finder(chemin, reveler=False):
 # Enregistrement micro
 # ---------------------------------------------------------------------------
 
-CAPTURE_SYSTEME = CODE_APP.parent.parent / "MacOS" / "capture-systeme"
+# Outil de capture : celui livré avec la dernière mise à jour du code s'il existe, sinon celui de l'app
+CAPTURE_SYSTEME = next((c for c in (DOSSIER_CODE / "capture-systeme", CODE_APP.parent.parent / "MacOS" / "capture-systeme")
+                        if c.exists()), CODE_APP.parent.parent / "MacOS" / "capture-systeme")
 DOSSIER_CAPTURE = DOSSIER_APP / "capture"   # pistes « son système » le temps du mixage
 
 # État de la capture du son système, affiché dans la fenêtre :
@@ -403,6 +405,9 @@ def tester_son_systeme():
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+        bilan = (proc.stderr.read() or "").strip().splitlines()
+        bilan = bilan[-1] if bilan else ""
+        print(f"Test son du Mac : {bilan}", flush=True)
         try:
             audio, _ = sf.read(str(fichier), dtype="float32")
             niveau = float(np.abs(audio).max()) if len(audio) else 0.0
@@ -410,7 +415,7 @@ def tester_son_systeme():
             niveau = 0.0
     if niveau < 0.001:
         return {"ok": False, "message": "La capture tourne mais aucun son n'a été reçu. Vérifie que le volume "
-                                        "du Mac n'est pas coupé, puis réessaie."}
+                                        f"du Mac n'est pas coupé, puis réessaie. ({bilan or 'aucun bloc audio'})"}
     SON_SYSTEME.update(etat="ok", message="")
     return {"ok": True, "message": "Son du Mac OK : la voix de tes interlocuteurs sera enregistrée."}
 
@@ -1630,6 +1635,15 @@ class Api(http.server.BaseHTTPRequestHandler):
             if self.path == "/api/quitter":
                 return self._json(200, self.app.quitter_depuis_fenetre())
             if self.path == "/api/supprimer":
+                if isinstance(d.get("elements"), list):   # sélection multiple
+                    faits, erreurs = 0, []
+                    for e in d["elements"][:500]:
+                        try:
+                            supprimer_compte_rendu(str(e.get("projet", "")), str(e.get("fichier", "")))
+                            faits += 1
+                        except Exception as err:
+                            erreurs.append(f"{e.get('fichier')} : {err}")
+                    return self._json(200, {"supprimes": faits, "erreurs": erreurs})
                 if d.get("quoi") == "audio":
                     return self._json(200, supprimer_audio(d.get("projet", ""), d.get("fichier", "")))
                 return self._json(200, supprimer_compte_rendu(d.get("projet", ""), d.get("fichier", "")))
@@ -1914,6 +1928,10 @@ class App(rumps.App):
             shutil.rmtree(nouveau, ignore_errors=True)
             with zipfile.ZipFile(archive) as z:
                 z.extractall(nouveau)
+            # zipfile ne garde pas les droits d'exécution : on les remet sur l'outil natif
+            outil = nouveau / "capture-systeme"
+            if outil.exists():
+                outil.chmod(0o755)
             version_zip = (nouveau / "VERSION").read_text().strip()
             if not (nouveau / "app.py").exists() or version_zip != infos["version"]:
                 raise RuntimeError("archive incomplète")

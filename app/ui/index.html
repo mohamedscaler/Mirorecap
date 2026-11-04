@@ -198,6 +198,21 @@
   .rangee .m { font-size: 12px; color: var(--second); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rangee[aria-current="true"] { background: var(--selection-liste); color: #fff; }
   .rangee[aria-current="true"] .m { color: rgba(255, 255, 255, .8); }
+  /* Sélection multiple */
+  .entete-liste .droite { display: flex; align-items: baseline; gap: 10px; }
+  .liste.selection .rangee { position: relative; padding-left: 38px; }
+  .liste.selection .rangee::before {
+    content: ""; position: absolute; left: 11px; top: 50%; width: 16px; height: 16px; margin-top: -9px;
+    border-radius: 50%; border: 1.5px solid var(--second); box-sizing: border-box;
+  }
+  .liste.selection .rangee[aria-selected="true"]::before {
+    background: var(--bleu) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.2l2.6 2.6L12 5.4' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px no-repeat;
+    border-color: var(--bleu);
+  }
+  .liste.selection .rangee[aria-current="true"] { background: none; color: inherit; }
+  .liste.selection .rangee[aria-current="true"] .m { color: var(--second); }
+  .liste.selection .rangee[aria-selected="true"] { background: rgba(10, 132, 255, .14); }
+  .barre-selection { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--separateur); font-size: 12px; }
   .groupe-date { font-size: 11px; font-weight: 600; color: var(--second); padding: 12px 10px 4px; }
   .vide { color: var(--second); padding: 24px 18px; text-align: center; line-height: 1.5; }
 
@@ -459,13 +474,19 @@
   <section id="vue-comptes-rendus" class="vue" hidden>
     <div class="colonne-liste">
       <div class="entete-liste">
-        <div class="ligne"><h1 id="titre-liste">Comptes rendus</h1><span id="filtre-actif" class="second"></span></div>
+        <div class="ligne"><h1 id="titre-liste">Comptes rendus</h1><span class="droite"><span id="filtre-actif" class="second"></span><button id="mode-selection" class="lien" type="button">Sélectionner</button></span></div>
         <div class="recherche">
           <svg width="13" height="13"><use href="#i-loupe"/></svg>
           <input id="recherche" class="champ" type="search" placeholder="Rechercher" aria-label="Rechercher">
         </div>
       </div>
       <ul id="liste" class="liste"></ul>
+      <div id="barre-selection" class="barre-selection" hidden>
+        <span id="nb-selection">0 sélectionné</span>
+        <button id="tout-selectionner" class="lien" type="button">Tout</button>
+        <span style="flex:1"></span>
+        <button id="supprimer-selection" class="bouton danger" type="button" disabled>Supprimer</button>
+      </div>
       <p id="liste-vide" class="vide" hidden>Aucun compte rendu pour l'instant.<br>Lance un enregistrement ou dépose un audio dans le dossier d'import.</p>
     </div>
     <article id="lecteur" class="lecteur selectionnable">
@@ -976,16 +997,75 @@
       const g = groupeDate(c.date);
       if (g !== groupe) { html += `<li class="groupe-date">${esc(g)}</li>`; groupe = g; }
       const actif = selection && selection.projet === c.projet && selection.fichier === c.fichier;
-      html += `<li><button class="rangee" data-i="${comptesRendus.indexOf(c)}" aria-current="${actif}">
+      const coche = modeSelection && selectionMultiple.has(cleCR(c));
+      html += `<li><button class="rangee" data-i="${comptesRendus.indexOf(c)}" aria-current="${actif}"${modeSelection ? ` aria-selected="${coche}"` : ""}>
         <span class="t">${esc(c.titre)}</span>
         <span class="m">${esc(heure(c.date))} · ${esc(c.projet)}</span>
       </button></li>`;
     }
     $("#liste").innerHTML = html;
+    $("#liste").classList.toggle("selection", modeSelection);
+    majBarreSelection();
   }
+  // ---- Sélection multiple : bouton « Sélectionner », Cmd+clic, Maj+clic pour une plage ----
+  let modeSelection = false, dernierCoche = null;
+  const selectionMultiple = new Set();
+  const cleCR = (c) => c.projet + "/" + c.fichier;
+  function basculerModeSelection(actif) {
+    modeSelection = actif;
+    if (!actif) selectionMultiple.clear();
+    $("#mode-selection").textContent = actif ? "Terminé" : "Sélectionner";
+    $("#barre-selection").hidden = !actif;
+    rendreListe();
+  }
+  function majBarreSelection() {
+    const n = selectionMultiple.size;
+    $("#nb-selection").textContent = n ? `${n} sélectionné${n > 1 ? "s" : ""}` : "Aucun sélectionné";
+    const b = $("#supprimer-selection");
+    b.disabled = n === 0;
+    b.classList.remove("confirmer");
+    b.textContent = n > 1 ? `Supprimer les ${n}` : "Supprimer";
+  }
+  $("#mode-selection").addEventListener("click", () => basculerModeSelection(!modeSelection));
+  $("#tout-selectionner").addEventListener("click", () => {
+    const visibles = filtrer();
+    const tous = visibles.every((c) => selectionMultiple.has(cleCR(c)));
+    visibles.forEach((c) => tous ? selectionMultiple.delete(cleCR(c)) : selectionMultiple.add(cleCR(c)));
+    rendreListe();
+  });
+  $("#supprimer-selection").addEventListener("click", async () => {
+    const b = $("#supprimer-selection");
+    if (!b.classList.contains("confirmer")) {
+      b.classList.add("confirmer"); b.textContent = `Confirmer (${selectionMultiple.size})`;
+      setTimeout(majBarreSelection, 4000);
+      return;
+    }
+    const elements = [...selectionMultiple].map((k) => { const i = k.indexOf("/"); return { projet: k.slice(0, i), fichier: k.slice(i + 1) }; });
+    try {
+      const r = await api("/api/supprimer", { elements });
+      message(`${r.supprimes} ${r.supprimes > 1 ? "comptes rendus mis" : "compte rendu mis"} à la corbeille${r.erreurs.length ? ` · ${r.erreurs.length} en échec` : ""}.`);
+      selection = null;
+      basculerModeSelection(false);
+      chargerRaccourcis(); chargerComptesRendus();
+    } catch (err) { message(err.message); }
+  });
   $("#liste").addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-i]");
-    if (b) ouvrirCompteRendu(comptesRendus[+b.dataset.i]);
+    if (!b) return;
+    const c = comptesRendus[+b.dataset.i];
+    if (!modeSelection && (ev.metaKey || ev.shiftKey)) { basculerModeSelection(true); }
+    if (!modeSelection) return ouvrirCompteRendu(c);
+    const visibles = filtrer();
+    if (ev.shiftKey && dernierCoche) {
+      const a = visibles.findIndex((x) => cleCR(x) === dernierCoche), z = visibles.indexOf(c);
+      if (a !== -1) visibles.slice(Math.min(a, z), Math.max(a, z) + 1).forEach((x) => selectionMultiple.add(cleCR(x)));
+    } else if (selectionMultiple.has(cleCR(c))) selectionMultiple.delete(cleCR(c));
+    else selectionMultiple.add(cleCR(c));
+    dernierCoche = cleCR(c);
+    rendreListe();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && modeSelection && !document.querySelector("dialog[open]")) basculerModeSelection(false);
   });
   $("#recherche").addEventListener("input", rendreListe);
 

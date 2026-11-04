@@ -15,6 +15,7 @@
 #import <CoreMedia/CoreMedia.h>
 #import <Foundation/Foundation.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
+#include <math.h>
 #include <signal.h>
 
 @interface Capteur : NSObject <SCStreamOutput, SCStreamDelegate>
@@ -24,6 +25,9 @@
 
 @implementation Capteur {
     ExtAudioFileRef _fichier;   // créé au premier bloc audio (on connaît alors le format exact)
+    long long _echantillons;    // diagnostic : quantité écrite et niveau maximal
+    float _niveau;
+    int _erreurs;
 }
 
 - (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)tampon ofType:(SCStreamOutputType)type {
@@ -50,14 +54,32 @@
         ExtAudioFileSetProperty(_fichier, kExtAudioFileProperty_ClientDataFormat, sizeof(*entree), entree);
     }
 
-    // Récupère les données audio du bloc (appel en deux temps : taille, puis contenu)
+    // Récupère les données audio du bloc. Appel en deux temps (taille, puis contenu) avec
+    // EXACTEMENT les mêmes options : sinon la taille ne correspond pas et la lecture échoue.
+    const uint32_t options = kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment;
     size_t taille = 0;
-    CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(tampon, &taille, NULL, 0, NULL, NULL, 0, NULL);
+    OSStatus s = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+        tampon, &taille, NULL, 0, kCFAllocatorDefault, kCFAllocatorDefault, options, NULL);
+    if (s != noErr || taille == 0) { _erreurs++; return; }
     AudioBufferList *liste = malloc(taille);
     CMBlockBufferRef bloc = NULL;
-    OSStatus s = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-        tampon, NULL, liste, taille, NULL, NULL, kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &bloc);
-    if (s == noErr) ExtAudioFileWrite(_fichier, (UInt32)CMSampleBufferGetNumSamples(tampon), liste);
+    s = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+        tampon, NULL, liste, taille, kCFAllocatorDefault, kCFAllocatorDefault, options, &bloc);
+    if (s == noErr) {
+        UInt32 images = (UInt32)CMSampleBufferGetNumSamples(tampon);
+        // Niveau maximal (données en float pour ScreenCaptureKit)
+        if (entree->mFormatFlags & kAudioFormatFlagIsFloat) {
+            for (UInt32 b = 0; b < liste->mNumberBuffers; b++) {
+                float *x = liste->mBuffers[b].mData;
+                UInt32 n = liste->mBuffers[b].mDataByteSize / sizeof(float);
+                for (UInt32 i = 0; i < n; i++) { float v = fabsf(x[i]); if (v > _niveau) _niveau = v; }
+            }
+        }
+        if (ExtAudioFileWrite(_fichier, images, liste) == noErr) _echantillons += images;
+        else _erreurs++;
+    } else {
+        _erreurs++;
+    }
     free(liste);
     if (bloc) CFRelease(bloc);
 }
@@ -68,9 +90,10 @@
     exit(4);
 }
 
-// Finalise l'en-tête WAV (sinon le fichier est illisible)
+// Finalise l'en-tête WAV (sinon le fichier est illisible) et résume la capture
 - (void)terminer {
     if (_fichier) { ExtAudioFileDispose(_fichier); _fichier = NULL; }
+    fprintf(stderr, "bilan : %lld échantillons, niveau max %.4f, %d erreurs\n", _echantillons, _niveau, _erreurs);
 }
 @end
 
