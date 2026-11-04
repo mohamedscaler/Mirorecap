@@ -7,7 +7,9 @@ Tu la pilotes depuis l'icône 🎙 de la barre de menus ou depuis sa fenêtre, o
 ## Ce qu'il faut
 
 - Un Mac avec puce Apple (M1 ou plus récent), sous macOS 13.5 minimum
-- Une clé API Anthropic, facturée à l'usage, à créer sur [console.anthropic.com](https://console.anthropic.com) : Billing pour ajouter du crédit, puis API Keys → Create Key
+- **Au choix, pour l'analyse par Claude :**
+  - un abonnement Claude **Pro ou Max** : MiroRecap passe par Claude Code, sans clé API (recommandé) ;
+  - ou une clé API Anthropic, facturée à l'usage, à créer sur [console.anthropic.com](https://console.anthropic.com).
 
 ## Installation
 
@@ -28,8 +30,9 @@ Ouvre le Terminal (Cmd + Espace, tape « Terminal ») et colle :
 
 Dans les deux cas, ça installe tout, Homebrew et Whisper compris. Ton mot de passe Mac peut être demandé : il ne s'affiche pas quand tu tapes, c'est normal. Compte quelques minutes.
 
-Au premier lancement :
-1. La fenêtre de MiroRecap s'ouvre sur les réglages : colle ta clé API.
+Au premier lancement, la fenêtre de MiroRecap s'ouvre sur les Réglages :
+1. **Avec ton abonnement Claude** : clique sur **Installer et connecter**. Le Terminal s'ouvre et installe Claude Code. Quand il te le demande, choisis **Claude account** et connecte-toi dans le navigateur, puis tape `/exit`.
+   **Ou avec une clé API** : colle-la dans « Clé API Anthropic ».
 2. Accepte l'accès au micro et à iCloud Drive quand macOS le demande.
 
 L'app se relance toute seule à chaque démarrage du Mac. La première transcription télécharge le modèle Whisper (internet nécessaire), donc elle prend plus de temps. Ensuite, la transcription se fait hors ligne.

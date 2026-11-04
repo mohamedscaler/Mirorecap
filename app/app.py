@@ -66,6 +66,10 @@ CONFIG_DEFAUT = {
     "dossier_sortie": "",
     "modele_whisper": MODELES_WHISPER[0]["id"],
     "modele_claude": "claude-sonnet-5-5",
+    # Moteur d'analyse : "auto" (abonnement si Claude Code est installé, sinon clé API),
+    # "abonnement" (Claude Code, compte Claude Pro/Max) ou "api" (clé API Anthropic)
+    "moteur": "auto",
+    "modele_abonnement": "sonnet",
     "langue": "fr",
 }
 
@@ -270,23 +274,42 @@ def transcrire(chemin_audio):
 # Analyse par Claude : compte rendu + classement
 # ---------------------------------------------------------------------------
 
-def analyser(transcription, date):
-    import anthropic
+def trouver_claude_code():
+    """Chemin du programme Claude Code, ou None s'il n'est pas installé."""
+    candidats = [
+        shutil.which("claude"),
+        Path.home() / ".local" / "bin" / "claude",
+        Path.home() / ".claude" / "local" / "claude",
+        Path("/opt/homebrew/bin/claude"),
+        Path("/usr/local/bin/claude"),
+    ]
+    for c in candidats:
+        if c and Path(c).exists():
+            return str(c)
+    return None
 
-    if not CONFIG.get("cle_api_anthropic"):
-        raise RuntimeError("clé API manquante (MiroRecap → Réglages)")
 
-    projets = lister_projets()
-    noms = list(projets.keys()) + [PROJET_PAR_DEFAUT]
+def moteur_effectif():
+    """Moteur réellement utilisé : 'abonnement', 'api', ou None si aucun n'est prêt."""
+    choix = CONFIG.get("moteur", "auto")
+    claude = trouver_claude_code()
+    cle = CONFIG.get("cle_api_anthropic")
+    if choix == "abonnement":
+        return "abonnement" if claude else None
+    if choix == "api":
+        return "api" if cle else None
+    return "abonnement" if claude else ("api" if cle else None)
+
+
+def instructions_analyse(noms, projets):
     liste = "\n".join(f"- {nom}" + (f" : {desc}" if desc else "") for nom, desc in projets.items())
-
-    systeme = f"""Tu analyses des transcriptions automatiques d'appels et de rendez-vous pro (elles peuvent contenir des erreurs de reconnaissance).
+    return f"""Tu analyses des transcriptions automatiques d'appels et de rendez-vous pro (elles peuvent contenir des erreurs de reconnaissance).
 
 Projets existants :
 {liste or "(aucun projet créé pour l'instant)"}
 - {PROJET_PAR_DEFAUT} : rien ne correspond clairement
 
-Choisis le projet dont parle l'enregistrement. En cas de doute, prends "{PROJET_PAR_DEFAUT}".
+Choisis le projet dont parle l'enregistrement, en t'appuyant sur les noms de clients, d'entreprises, de produits et les sujets évoqués. En cas de doute, prends "{PROJET_PAR_DEFAUT}".
 
 Rédige le compte rendu en markdown, en français, sans titre principal, avec ces sections (omets celles qui seraient vides) :
 ## Contexte
@@ -302,6 +325,74 @@ Rédige le compte rendu en markdown, en français, sans titre principal, avec ce
 
 N'invente rien : si une info est incertaine ou mal transcrite, signale-le."""
 
+
+def analyser(transcription, date):
+    """Rédige le compte rendu et choisit le projet. Retourne {projet, titre, compte_rendu}."""
+    moteur = moteur_effectif()
+    if not moteur:
+        raise RuntimeError("aucun moteur d'analyse prêt : connecte ton abonnement Claude ou ajoute une clé API (Réglages)")
+
+    projets = lister_projets()
+    noms = list(projets.keys()) + [PROJET_PAR_DEFAUT]
+    systeme = instructions_analyse(noms, projets)
+    contenu = f"Date de l'enregistrement : {date:%d/%m/%Y %H:%M}\n\nTranscription :\n{transcription}"
+
+    donnees = analyser_abonnement(systeme, contenu) if moteur == "abonnement" else analyser_api(systeme, contenu, noms)
+    if donnees.get("projet") not in noms:
+        donnees["projet"] = PROJET_PAR_DEFAUT
+    for cle in ("titre", "compte_rendu"):
+        if not str(donnees.get(cle, "")).strip():
+            raise RuntimeError(f"réponse de Claude incomplète ({cle} manquant)")
+    return donnees
+
+
+def analyser_abonnement(systeme, contenu):
+    """Analyse via Claude Code en mode non interactif, avec le compte Claude (Pro/Max) de l'utilisateur."""
+    import tempfile
+
+    claude = trouver_claude_code()
+    consigne = (
+        systeme
+        + "\n\nRéponds UNIQUEMENT par un objet JSON valide, sans texte avant ni après, de la forme :\n"
+        + '{"projet": "<nom exact d\'un des projets listés>", "titre": "<titre court, 3 à 8 mots>", '
+        + '"compte_rendu": "<compte rendu en markdown>"}\n\n'
+        + contenu
+    )
+    # Dossier vide : Claude Code n'a aucun fichier à lire, il se contente de répondre
+    with tempfile.TemporaryDirectory() as dossier_vide:
+        r = subprocess.run(
+            [claude, "-p", "Suis les instructions reçues en entrée et réponds uniquement en JSON.",
+             "--output-format", "json", "--model", CONFIG.get("modele_abonnement", "sonnet"),
+             "--max-turns", "1"],
+            input=consigne, capture_output=True, text=True, timeout=900, cwd=dossier_vide,
+        )
+    sortie = r.stdout.strip()
+    if r.returncode != 0 and not sortie:
+        detail = (r.stderr.strip().splitlines() or ["erreur inconnue"])[-1]
+        raise RuntimeError(f"Claude Code : {detail} (es-tu bien connecté ? Réglages → Se connecter)")
+
+    # Sortie JSON de Claude Code : la réponse du modèle est dans "result"
+    texte = sortie
+    try:
+        enveloppe = json.loads(sortie)
+        if isinstance(enveloppe, dict):
+            if enveloppe.get("is_error"):
+                raise RuntimeError(f"Claude Code : {enveloppe.get('result') or 'erreur'}")
+            texte = enveloppe.get("result", "") or ""
+    except json.JSONDecodeError:
+        pass
+
+    # On extrait l'objet JSON de la réponse (au cas où il serait entouré de texte ou de ```)
+    debut, fin = texte.find("{"), texte.rfind("}")
+    if debut == -1 or fin <= debut:
+        raise RuntimeError("Claude n'a pas renvoyé de JSON exploitable")
+    return json.loads(texte[debut:fin + 1])
+
+
+def analyser_api(systeme, contenu, noms):
+    """Analyse via l'API Anthropic (clé API, facturée à l'usage)."""
+    import anthropic
+
     # Outil forcé = Claude renvoie forcément un JSON propre (projet, titre, compte rendu)
     outil = {
         "name": "classer_compte_rendu",
@@ -316,7 +407,6 @@ N'invente rien : si une info est incertaine ou mal transcrite, signale-le."""
             "required": ["projet", "titre", "compte_rendu"],
         },
     }
-
     client = anthropic.Anthropic(api_key=CONFIG["cle_api_anthropic"])
     reponse = client.messages.create(
         model=CONFIG["modele_claude"],
@@ -324,15 +414,9 @@ N'invente rien : si une info est incertaine ou mal transcrite, signale-le."""
         system=systeme,
         tools=[outil],
         tool_choice={"type": "tool", "name": "classer_compte_rendu"},
-        messages=[{
-            "role": "user",
-            "content": f"Date de l'enregistrement : {date:%d/%m/%Y %H:%M}\n\nTranscription :\n{transcription}",
-        }],
+        messages=[{"role": "user", "content": contenu}],
     )
-    donnees = next(b for b in reponse.content if b.type == "tool_use").input
-    if donnees.get("projet") not in noms:
-        donnees["projet"] = PROJET_PAR_DEFAUT
-    return donnees
+    return next(b for b in reponse.content if b.type == "tool_use").input
 
 
 # ---------------------------------------------------------------------------
@@ -445,13 +529,26 @@ def lire_reglages():
         "dossier_actuel": str(DOSSIER_SORTIE),
         "dossier_personnalise": CONFIG.get("dossier_sortie", ""),
         "erreurs": compter_erreurs(),
+        "moteur": CONFIG.get("moteur", "auto"),
+        "moteur_effectif": moteur_effectif(),
+        "claude_code": trouver_claude_code(),
     }
+
+
+def ouvrir_terminal(commande):
+    """Ouvre le Terminal et y lance une commande (installation / connexion de Claude Code)."""
+    commande = commande.replace("\\", "\\\\").replace('"', '\\"')
+    subprocess.run(["osascript",
+                    "-e", f'tell application "Terminal" to do script "{commande}"',
+                    "-e", 'tell application "Terminal" to activate'], check=False)
 
 
 def sauver_reglages(donnees):
     redemarrage = False
     if donnees.get("cle", "").strip():
         CONFIG["cle_api_anthropic"] = donnees["cle"].strip()
+    if donnees.get("moteur") in ("auto", "abonnement", "api"):
+        CONFIG["moteur"] = donnees["moteur"]
     if donnees.get("modele_whisper") in {m["id"] for m in MODELES_WHISPER}:
         CONFIG["modele_whisper"] = donnees["modele_whisper"]
     if "dossier_sortie" in donnees and donnees["dossier_sortie"].strip() != CONFIG.get("dossier_sortie", ""):
@@ -537,6 +634,13 @@ class Api(http.server.BaseHTTPRequestHandler):
                 return self._json(200, sauver_reglages(d))
             if self.path == "/api/erreurs/relancer":
                 return self._json(200, {"relances": relancer_erreurs()})
+            if self.path == "/api/claude-code":
+                if d.get("action") == "installer":
+                    # Installateur officiel, puis lancement de claude pour la connexion au compte
+                    ouvrir_terminal("curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude")
+                else:
+                    ouvrir_terminal(f"{trouver_claude_code() or 'claude'}")
+                return self._json(200, {"ok": True})
             if self.path == "/api/maj/verifier":
                 self.app.verifier_maj_maintenant()
                 return self._json(200, self.app.etat())
@@ -611,7 +715,7 @@ class App(rumps.App):
         self.timer.start()
 
         # Premier lancement (pas de clé) : on ouvre directement les réglages
-        if not CONFIG.get("cle_api_anthropic"):
+        if moteur_effectif() is None:
             self.ouvrir_fenetre("reglages")
 
     # --- État partagé avec la fenêtre --------------------------------------
@@ -624,7 +728,8 @@ class App(rumps.App):
             "statut": self.statut,
             "en_attente": self.file_traitement.qsize(),
             "erreurs": compter_erreurs(),
-            "cle_ok": bool(CONFIG.get("cle_api_anthropic")),
+            "cle_ok": moteur_effectif() is not None,
+            "moteur": moteur_effectif(),
             "dernier": self.dernier,
             "version": VERSION,
             "maj": self.maj,

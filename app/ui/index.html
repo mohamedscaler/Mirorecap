@@ -326,8 +326,8 @@
   </div>
   <div id="alerte" class="bandeau" hidden>
     <svg class="icone" width="18" height="18"><use href="#i-alerte"/></svg>
-    <span class="texte">Ajoute ta clé API pour que tes enregistrements soient analysés.</span>
-    <a class="bouton principal" href="#reglages" style="text-decoration:none">Ajouter ma clé</a>
+    <span class="texte">Connecte ton abonnement Claude (ou une clé API) pour que tes enregistrements soient analysés.</span>
+    <a class="bouton principal" href="#reglages" style="text-decoration:none">Configurer</a>
   </div>
 
   <!-- Comptes rendus -->
@@ -369,6 +369,19 @@
       <div class="contenu">
         <h1>Réglages</h1>
 
+        <p class="titre-groupe">Analyse par Claude</p>
+        <div class="groupe">
+          <div class="rang">
+            <span id="cc-point" class="point"></span>
+            <div class="corps" id="cc-etat"></div>
+            <button id="cc-installer" class="bouton principal" type="button">Installer et connecter</button>
+            <button id="cc-connecter" class="bouton" type="button">Se connecter</button>
+          </div>
+        </div>
+        <p class="note">Avec ton abonnement Claude (Pro ou Max), MiroRecap passe par Claude Code : pas de clé API, l'analyse compte dans les limites de ton abonnement. La connexion se fait une fois dans le Terminal, en choisissant « Claude account ».</p>
+
+        <div id="moteurs" class="groupe" role="radiogroup" aria-label="Moteur d'analyse" style="margin-top:14px"></div>
+
         <p class="titre-groupe">Clé API Anthropic</p>
         <div class="groupe">
           <div class="rang"><span id="cle-point" class="point"></span><div class="corps" id="cle-etat"></div></div>
@@ -377,7 +390,7 @@
             <button class="bouton principal" type="submit">Enregistrer</button>
           </form>
         </div>
-        <p class="note">Facturée à l'usage. <button class="lien" type="button" data-ouvrir="console">Créer une clé sur console.anthropic.com</button></p>
+        <p class="note">Optionnelle si tu utilises ton abonnement. Facturée à l'usage. <button class="lien" type="button" data-ouvrir="console">Créer une clé sur console.anthropic.com</button></p>
 
         <p class="titre-groupe">Transcription</p>
         <div id="modeles" class="groupe" role="radiogroup" aria-label="Modèle Whisper"></div>
@@ -754,7 +767,26 @@
     $("#cle-point").classList.toggle("ok", r.cle_definie);
     $("#cle-etat").innerHTML = r.cle_definie
       ? `<div>Clé enregistrée</div><div class="d">${esc(r.cle_apercu)}</div>`
-      : `<div>Aucune clé</div><div class="d">Les enregistrements ne peuvent pas être analysés</div>`;
+      : `<div>Aucune clé</div><div class="d">Pas nécessaire si tu utilises ton abonnement Claude</div>`;
+    // Moteur d'analyse
+    const libelles = { abonnement: "abonnement Claude", api: "clé API" };
+    $("#cc-point").classList.toggle("ok", !!r.claude_code);
+    $("#cc-etat").innerHTML = r.claude_code
+      ? `<div>Claude Code installé</div><div class="d">Analyse actuelle : ${r.moteur_effectif ? libelles[r.moteur_effectif] : "aucune, rien n'est configuré"}</div>`
+      : `<div>Claude Code n'est pas installé</div><div class="d">Nécessaire pour utiliser ton abonnement Claude</div>`;
+    $("#cc-installer").hidden = !!r.claude_code;
+    $("#cc-connecter").hidden = !r.claude_code;
+    const moteurs = [
+      { id: "auto", nom: "Automatique", detail: "Abonnement Claude s'il est installé, sinon clé API" },
+      { id: "abonnement", nom: "Abonnement Claude", detail: "Via Claude Code, inclus dans Pro et Max" },
+      { id: "api", nom: "Clé API", detail: "Facturée à l'usage sur console.anthropic.com" },
+    ];
+    $("#moteurs").innerHTML = moteurs.map((m) => `
+      <div class="rang cliquable" role="radio" tabindex="0" data-moteur="${m.id}" aria-checked="${m.id === r.moteur}">
+        <div class="corps"><div>${m.nom}</div><div class="d">${m.detail}</div></div>
+        <span class="coche">${icone("i-coche", 15)}</span>
+      </div>`).join("");
+
     $("#modeles").innerHTML = r.modeles.map((m) => `
       <div class="rang cliquable" role="radio" tabindex="0" data-modele="${esc(m.id)}" aria-checked="${m.id === r.modele_whisper}">
         <div class="corps"><div>${esc(m.nom)}</div><div class="d">${esc(m.detail)}</div></div>
@@ -792,6 +824,29 @@
     const r = ev.target.closest("[data-modele]");
     if (r && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); choisirModele(r); }
   });
+
+  async function choisirMoteur(r) {
+    try {
+      await api("/api/reglages", { moteur: r.dataset.moteur });
+      message("Moteur d'analyse changé.");
+      chargerReglages(); sonder();
+    } catch (err) { message(err.message); }
+  }
+  $("#moteurs").addEventListener("click", (ev) => { const r = ev.target.closest("[data-moteur]"); if (r) choisirMoteur(r); });
+  $("#moteurs").addEventListener("keydown", (ev) => {
+    const r = ev.target.closest("[data-moteur]");
+    if (r && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); choisirMoteur(r); }
+  });
+  $("#cc-installer").addEventListener("click", async () => {
+    await api("/api/claude-code", { action: "installer" });
+    message("Le Terminal s'ouvre : laisse l'installation finir, puis choisis « Claude account » pour te connecter.");
+  });
+  $("#cc-connecter").addEventListener("click", async () => {
+    await api("/api/claude-code", { action: "connecter" });
+    message("Le Terminal s'ouvre : si on te le demande, choisis « Claude account ». Tape /exit une fois connecté.");
+  });
+  // Après une installation dans le Terminal, on rafraîchit l'état quand on revient sur la fenêtre
+  window.addEventListener("focus", () => { if (!$("#vue-reglages").hidden) chargerReglages(); });
 
   $("#form-dossier").addEventListener("submit", async (ev) => {
     ev.preventDefault();
