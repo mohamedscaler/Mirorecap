@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiroRecap</title>
+<style>
+  /* ---------- Jetons ---------- */
+  :root {
+    --fond: #F3F4F1;
+    --cote: #E6E8E3;
+    --surface: #FFFFFF;
+    --survol: #DADDD6;
+    --champ: #E6E8E3;
+    --encre: #121412;
+    --second: #5A5F59;
+    --accent: #D7392A;
+    --accent-appui: #B92E21;
+    --sur-accent: #FFFFFF;
+
+    --t-xl: 44px;   /* chrono */
+    --t-l: 28px;    /* titres de vue, titre du compte rendu */
+    --t-m: 16px;    /* texte */
+    --t-s: 13px;    /* notes secondaires */
+
+    --marge: 28px;
+    --rayon: 999px; /* boutons : entièrement ronds, partout */
+    --duree: 160ms;
+    --courbe: cubic-bezier(.2, .7, .2, 1);
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fond: #141614;
+      --cote: #1C1F1C;
+      --surface: #1F221F;
+      --survol: #2B2F2B;
+      --champ: #262A26;
+      --encre: #ECEEEA;
+      --second: #A2A8A0;
+      --accent: #E5483A;
+      --accent-appui: #F05E50;
+    }
+  }
+
+  /* ---------- Base ---------- */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font: var(--t-m)/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: var(--encre);
+    background: var(--fond);
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 0; background: none; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  .second { color: var(--second); font-size: var(--t-s); }
+
+  /* ---------- Colonne de gauche ---------- */
+  .cote {
+    background: var(--cote);
+    display: flex;
+    flex-direction: column;
+    padding: var(--marge);
+    gap: 40px;
+    overflow-y: auto;
+  }
+  .marque { font-size: var(--t-m); font-weight: 700; letter-spacing: -0.01em; }
+
+  .micro { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .rec {
+    width: 132px; height: 132px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--sur-accent);
+    font-weight: 600;
+    display: grid; place-items: center;
+    margin-bottom: 18px;
+    transition: transform var(--duree) var(--courbe), background-color var(--duree);
+  }
+  .rec:hover { transform: scale(1.03); }
+  .rec:active { transform: scale(.96); background: var(--accent-appui); }
+  .rec[aria-pressed="true"] { background: var(--encre); color: var(--fond); }
+  .rec-interieur { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .rec-point { width: 14px; height: 14px; border-radius: 50%; background: currentColor; }
+  .rec[aria-pressed="true"] .rec-point { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .chrono {
+    font-size: var(--t-xl);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .statut { color: var(--second); min-height: 1.5em; }
+
+  .nav { display: flex; flex-direction: column; gap: 2px; margin: 0 -12px; }
+  .nav a {
+    color: var(--encre); text-decoration: none;
+    padding: 8px 12px; border-radius: 10px;
+    transition: background-color var(--duree);
+  }
+  .nav a:hover { background: var(--survol); }
+  .nav a[aria-current="page"] { background: var(--surface); font-weight: 600; }
+
+  .pied { margin-top: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .lien { color: var(--second); font-size: var(--t-s); padding: 2px 0; transition: color var(--duree); }
+  .lien:hover { color: var(--encre); }
+
+  /* ---------- Zone principale ---------- */
+  main { overflow: hidden; display: flex; flex-direction: column; }
+  .alerte {
+    background: var(--accent); color: var(--sur-accent);
+    padding: 12px var(--marge);
+    display: flex; gap: 16px; align-items: center; justify-content: space-between;
+  }
+  .alerte a { color: inherit; font-weight: 600; }
+  .vue { flex: 1; overflow-y: auto; padding: var(--marge) var(--marge) 64px; animation: entree 220ms var(--courbe); }
+  @keyframes entree { from { opacity: 0; transform: translateY(12px); } }
+  h1 { font-size: var(--t-l); letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 20px; }
+  h2 { font-size: var(--t-m); font-weight: 650; margin-bottom: 6px; }
+
+  /* Boutons texte */
+  .btn {
+    background: var(--encre); color: var(--fond);
+    padding: 9px 18px; border-radius: var(--rayon); font-weight: 600; white-space: nowrap;
+    transition: transform var(--duree) var(--courbe), opacity var(--duree);
+  }
+  .btn:hover { opacity: .88; }
+  .btn:active { transform: scale(.97); }
+  .btn.discret { background: var(--champ); color: var(--encre); }
+
+  /* Champs (seuls éléments avec un contour, au focus) */
+  input[type="text"], input[type="search"], input[type="password"], select, textarea {
+    background: var(--champ); border: 0; border-radius: 10px;
+    padding: 9px 12px; width: 100%;
+  }
+  textarea { resize: vertical; min-height: 64px; line-height: 1.45; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+
+  /* ---------- Vue comptes rendus ---------- */
+  #vue-comptes-rendus { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 0; padding: 0; overflow: hidden; }
+  .col-liste { padding: var(--marge); overflow-y: auto; }
+  .filtres { display: grid; gap: 8px; margin-bottom: 16px; }
+  .liste { list-style: none; display: flex; flex-direction: column; gap: 2px; margin: 0 -12px; }
+  .liste button {
+    width: 100%; text-align: left;
+    padding: 10px 12px; border-radius: 10px;
+    display: flex; flex-direction: column; gap: 2px;
+    transition: background-color var(--duree);
+  }
+  .liste button:hover { background: var(--survol); }
+  .liste button[aria-current="true"] { background: var(--surface); }
+  .liste .t { font-weight: 600; line-height: 1.3; }
+
+  .lecteur { background: var(--surface); padding: 40px 48px 80px; overflow-y: auto; }
+  .lecteur-tete { margin-bottom: 28px; }
+  .lecteur-tete h1 { margin-bottom: 8px; }
+  .lecteur-tete .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .md { max-width: 68ch; }
+  .md h2 { margin-top: 28px; }
+  .md p, .md ul, .md ol { margin-bottom: 12px; }
+  .md ul, .md ol { padding-left: 20px; }
+  .md li { margin-bottom: 4px; }
+  .md .ligne { margin-bottom: 6px; }
+  .md .temps { color: var(--second); font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .md .pause { height: 28px; }
+  .vide { color: var(--second); max-width: 40ch; }
+
+  /* ---------- Vue projets & réglages ---------- */
+  .colonne { max-width: 640px; display: flex; flex-direction: column; gap: 44px; }
+  .bloc { display: flex; flex-direction: column; gap: 10px; }
+  .bloc .ligne-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .projets { display: flex; flex-direction: column; gap: 12px; }
+  .projet { background: var(--surface); border-radius: 14px; padding: 18px; display: grid; gap: 10px; }
+  .projet .entete { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .modeles { display: flex; flex-direction: column; gap: 6px; }
+  .modele {
+    display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline;
+    background: var(--surface); border-radius: 12px; padding: 12px 14px; cursor: pointer;
+    transition: background-color var(--duree);
+  }
+  .modele:hover { background: var(--survol); }
+  .modele input { grid-row: span 2; accent-color: var(--accent); }
+  .modele .nom { font-weight: 600; }
+  .chemin { word-break: break-all; }
+
+  .message {
+    position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 20px);
+    background: var(--encre); color: var(--fond);
+    padding: 10px 18px; border-radius: var(--rayon);
+    opacity: 0; pointer-events: none;
+    transition: opacity var(--duree), transform var(--duree) var(--courbe);
+  }
+  .message.visible { opacity: 1; transform: translate(-50%, 0); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<aside class="cote">
+  <div class="marque">MiroRecap</div>
+
+  <section class="micro" aria-label="Enregistrement">
+    <button id="rec" class="rec" aria-pressed="false">
+      <span class="rec-interieur"><span class="rec-point"></span><span id="rec-texte">Enregistrer</span></span>
+    </button>
+    <p id="chrono" class="chrono">00:00</p>
+    <p id="statut" class="statut" aria-live="polite">Prêt</p>
+  </section>
+
+  <nav class="nav" aria-label="Sections">
+    <a href="#comptes-rendus" data-vue="comptes-rendus">Comptes rendus</a>
+    <a href="#projets" data-vue="projets">Projets</a>
+    <a href="#reglages" data-vue="reglages">Réglages</a>
+  </nav>
+
+  <div class="pied">
+    <button class="lien" data-ouvrir="dossier">Ouvrir le dossier dans le Finder</button>
+    <button class="lien" data-ouvrir="import">Dossier d'import (iPhone)</button>
+  </div>
+</aside>
+
+<main>
+  <div id="alerte" class="alerte" hidden>
+    <span>Ajoute ta clé API pour que tes enregistrements soient analysés.</span>
+    <a href="#reglages">Ajouter ma clé</a>
+  </div>
+
+  <!-- Comptes rendus -->
+  <section id="vue-comptes-rendus" class="vue" hidden>
+    <div class="col-liste">
+      <h1>Comptes rendus</h1>
+      <div class="filtres">
+        <input id="recherche" type="search" placeholder="Rechercher un titre" aria-label="Rechercher">
+        <select id="filtre-projet" aria-label="Filtrer par projet"></select>
+      </div>
+      <ul id="liste" class="liste"></ul>
+      <p id="liste-vide" class="vide" hidden>Aucun compte rendu pour l'instant. Lance un enregistrement ou dépose un audio dans le dossier d'import.</p>
+    </div>
+    <article id="lecteur" class="lecteur">
+      <p class="vide">Choisis un compte rendu dans la liste.</p>
+    </article>
+  </section>
+
+  <!-- Projets -->
+  <section id="vue-projets" class="vue" hidden>
+    <div class="colonne">
+      <div>
+        <h1>Projets</h1>
+        <p class="second">Chaque projet est un dossier. Claude range chaque compte rendu dans celui qui correspond, grâce à son nom et à sa description.</p>
+      </div>
+
+      <form id="form-projet" class="bloc">
+        <h2>Nouveau projet</h2>
+        <input id="np-nom" type="text" placeholder="Nom (client, entreprise, sujet…)" required aria-label="Nom du projet">
+        <textarea id="np-desc" placeholder="Une phrase pour aider le classement, par exemple : boutique Shopify, campagnes TikTok Ads" aria-label="Description"></textarea>
+        <div class="ligne-actions"><button class="btn" type="submit">Créer le projet</button></div>
+      </form>
+
+      <div class="bloc">
+        <h2>Tes projets</h2>
+        <div id="liste-projets" class="projets"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Réglages -->
+  <section id="vue-reglages" class="vue" hidden>
+    <div class="colonne">
+      <h1>Réglages</h1>
+
+      <form id="form-cle" class="bloc">
+        <h2>Clé API Anthropic</h2>
+        <p id="cle-etat" class="second"></p>
+        <input id="cle" type="password" placeholder="sk-ant-…" autocomplete="off" aria-label="Clé API">
+        <div class="ligne-actions">
+          <button class="btn" type="submit">Enregistrer la clé</button>
+          <button class="lien" type="button" data-ouvrir="console">Créer une clé sur console.anthropic.com</button>
+        </div>
+      </form>
+
+      <div class="bloc">
+        <h2>Transcription</h2>
+        <p class="second">Whisper tourne sur ton Mac : l'audio ne quitte jamais ta machine. Un modèle se télécharge au premier usage, ensuite tout se fait hors ligne.</p>
+        <div id="modeles" class="modeles" role="radiogroup" aria-label="Modèle Whisper"></div>
+      </div>
+
+      <form id="form-dossier" class="bloc">
+        <h2>Dossier des comptes rendus</h2>
+        <p id="dossier-actuel" class="second chemin"></p>
+        <input id="dossier" type="text" placeholder="Laisser vide pour iCloud Drive/Comptes-rendus" aria-label="Dossier personnalisé">
+        <div class="ligne-actions">
+          <button class="btn" type="submit">Changer de dossier</button>
+          <span class="second">Prend effet au prochain lancement de l'app.</span>
+        </div>
+      </form>
+
+      <div class="bloc">
+        <h2>Erreurs</h2>
+        <p id="erreurs-etat" class="second"></p>
+        <div class="ligne-actions">
+          <button id="relancer" class="btn discret" type="button">Relancer le traitement</button>
+          <button class="lien" type="button" data-ouvrir="erreurs">Voir les fichiers</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<p id="message" class="message" role="status"></p>
+
+<script>
+  const JETON = "__JETON__";
+  const $ = (s) => document.querySelector(s);
+
+  // ---------- Utilitaires ----------
+  async function api(chemin, donnees) {
+    const options = { headers: { "X-Jeton": JETON } };
+    if (donnees !== undefined) {
+      options.method = "POST";
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(donnees);
+    }
+    const r = await fetch(chemin, options);
+    const json = await r.json();
+    if (!r.ok) throw new Error(json.erreur || "Erreur inconnue");
+    return json;
+  }
+
+  function esc(t) {
+    return String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  let minuterieMessage;
+  function message(texte) {
+    const el = $("#message");
+    el.textContent = texte;
+    el.classList.add("visible");
+    clearTimeout(minuterieMessage);
+    minuterieMessage = setTimeout(() => el.classList.remove("visible"), 2600);
+  }
+
+  function dateLisible(iso) {
+    const d = new Date(iso);
+    const jour = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "long" });
+    return `${jour} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+
+  // Petit rendu markdown : titres, listes, gras, lignes de transcription horodatées
+  function markdown(texte) {
+    const inline = (t) => esc(t)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/`([^`]+)`/g, "$1");
+    let html = "", liste = null;
+    const fermer = () => { if (liste) { html += `</${liste}>`; liste = null; } };
+    const lignes = texte.split("\n");
+    if (lignes[0].startsWith("# ")) lignes.shift(); // le titre est affiché à part
+    for (const brute of lignes) {
+      const l = brute.trimEnd();
+      let m;
+      if (!l.trim()) { fermer(); continue; }
+      if (l.trim() === "---") { fermer(); html += '<div class="pause"></div>'; continue; }
+      if ((m = l.match(/^#{2,6}\s+(.*)/))) { fermer(); html += `<h2>${inline(m[1])}</h2>`; continue; }
+      if ((m = l.match(/^\s*[-*]\s+(.*)/))) {
+        if (liste !== "ul") { fermer(); html += "<ul>"; liste = "ul"; }
+        html += `<li>${inline(m[1])}</li>`; continue;
+      }
+      if ((m = l.match(/^\s*\d+[.)]\s+(.*)/))) {
+        if (liste !== "ol") { fermer(); html += "<ol>"; liste = "ol"; }
+        html += `<li>${inline(m[1])}</li>`; continue;
+      }
+      fermer();
+      if ((m = l.match(/^\[(\d{2}:\d{2})\]\s*(.*)/))) {
+        html += `<p class="ligne"><span class="temps">${m[1]}</span>${inline(m[2])}</p>`; continue;
+      }
+      html += `<p>${inline(l)}</p>`;
+    }
+    fermer();
+    return html;
+  }
+
+  // ---------- Navigation ----------
+  const VUES = ["comptes-rendus", "projets", "reglages"];
+  function afficher() {
+    const vue = VUES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "comptes-rendus";
+    VUES.forEach((v) => { $(`#vue-${v}`).hidden = v !== vue; });
+    document.querySelectorAll(".nav a").forEach((a) => {
+      a.toggleAttribute("aria-current", a.dataset.vue === vue);
+      if (a.dataset.vue === vue) a.setAttribute("aria-current", "page");
+    });
+    if (vue === "comptes-rendus") chargerComptesRendus();
+    if (vue === "projets") chargerProjets();
+    if (vue === "reglages") chargerReglages();
+  }
+  window.addEventListener("hashchange", afficher);
+
+  // ---------- Enregistrement + état ----------
+  let etat = null, dernierConnu = null;
+
+  function rendreEtat(e) {
+    etat = e;
+    const rec = $("#rec");
+    rec.setAttribute("aria-pressed", e.enregistrement);
+    $("#rec-texte").textContent = e.enregistrement ? "Arrêter" : "Enregistrer";
+    const m = String(Math.floor(e.duree / 60)).padStart(2, "0");
+    const s = String(e.duree % 60).padStart(2, "0");
+    $("#chrono").textContent = `${m}:${s}`;
+
+    let statut = "Prêt";
+    if (e.enregistrement) statut = "Enregistrement en cours";
+    else if (e.statut) statut = e.statut + (e.en_attente ? ` · ${e.en_attente} en attente` : "");
+    if (e.erreurs) statut += ` · ${e.erreurs} en erreur`;
+    $("#statut").textContent = statut;
+
+    $("#alerte").hidden = e.cle_ok;
+
+    // Nouveau compte rendu terminé : on rafraîchit la liste
+    const cle = e.dernier ? e.dernier.projet + "/" + e.dernier.fichier : null;
+    if (cle && cle !== dernierConnu) {
+      if (dernierConnu !== null && !$("#vue-comptes-rendus").hidden) chargerComptesRendus();
+      dernierConnu = cle;
+    }
+    if (dernierConnu === null) dernierConnu = cle || "";
+  }
+
+  async function sonder() {
+    try { rendreEtat(await api("/api/etat")); } catch (_) { /* l'app redémarre peut-être */ }
+  }
+  setInterval(sonder, 1000);
+
+  $("#rec").addEventListener("click", async () => {
+    try {
+      rendreEtat(await api("/api/enregistrement", {}));
+      if (!etat.enregistrement) message("Enregistrement envoyé à l'analyse.");
+    } catch (err) { message("Micro inaccessible : " + err.message); }
+  });
+
+  document.querySelectorAll("[data-ouvrir]").forEach((b) =>
+    b.addEventListener("click", () => api("/api/ouvrir", { cible: b.dataset.ouvrir }).catch((e) => message(e.message)))
+  );
+
+  // ---------- Comptes rendus ----------
+  let comptesRendus = [], selection = null;
+
+  async function chargerComptesRendus() {
+    comptesRendus = await api("/api/comptes-rendus");
+    const projets = [...new Set(comptesRendus.map((c) => c.projet))].sort((a, b) => a.localeCompare(b, "fr"));
+    const filtre = $("#filtre-projet");
+    const choix = filtre.value;
+    filtre.innerHTML = `<option value="">Tous les projets</option>` +
+      projets.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+    if (projets.includes(choix)) filtre.value = choix;
+    rendreListe();
+    if (!selection && comptesRendus.length) ouvrirCompteRendu(comptesRendus[0]);
+  }
+
+  function rendreListe() {
+    const q = $("#recherche").value.trim().toLowerCase();
+    const p = $("#filtre-projet").value;
+    const visibles = comptesRendus.filter((c) => (!p || c.projet === p) && (!q || c.titre.toLowerCase().includes(q)));
+    $("#liste-vide").hidden = comptesRendus.length > 0;
+    $("#liste").innerHTML = visibles.map((c, i) => `
+      <li><button data-i="${comptesRendus.indexOf(c)}" aria-current="${selection && selection.projet === c.projet && selection.fichier === c.fichier}">
+        <span class="t">${esc(c.titre)}</span>
+        <span class="second">${esc(c.projet)} · ${esc(dateLisible(c.date))}</span>
+      </button></li>`).join("");
+  }
+  $("#liste").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-i]");
+    if (b) ouvrirCompteRendu(comptesRendus[+b.dataset.i]);
+  });
+  $("#recherche").addEventListener("input", rendreListe);
+  $("#filtre-projet").addEventListener("change", rendreListe);
+
+  async function ouvrirCompteRendu(c) {
+    selection = c;
+    rendreListe();
+    const params = new URLSearchParams({ projet: c.projet, fichier: c.fichier });
+    const { markdown: texte } = await api("/api/compte-rendu?" + params);
+    $("#lecteur").innerHTML = `
+      <header class="lecteur-tete">
+        <h1>${esc(c.titre)}</h1>
+        <p class="second">${esc(c.projet)} · ${esc(dateLisible(c.date))}</p>
+        <div class="actions">
+          <button class="btn discret" id="copier">Copier</button>
+          <button class="btn discret" id="finder">Voir dans le Finder</button>
+        </div>
+      </header>
+      <div class="md">${markdown(texte)}</div>`;
+    $("#lecteur").scrollTop = 0;
+    $("#finder").onclick = () => api("/api/ouvrir", { cible: "compte-rendu", projet: c.projet, fichier: c.fichier });
+    $("#copier").onclick = async () => {
+      // Copie le compte rendu sans la transcription complète
+      const sansTranscription = texte.split(/\n---\n/)[0];
+      try { await navigator.clipboard.writeText(sansTranscription); message("Compte rendu copié."); }
+      catch (_) { message("Copie impossible."); }
+    };
+  }
+
+  // ---------- Projets ----------
+  async function chargerProjets() {
+    rendreProjets(await api("/api/projets"));
+  }
+
+  function rendreProjets(projets) {
+    $("#liste-projets").innerHTML = projets.map((p) => p.modifiable ? `
+      <form class="projet" data-ancien="${esc(p.nom)}">
+        <div class="entete"><h2>${esc(p.nom)}</h2><span class="second">${p.nb} compte${p.nb > 1 ? "s" : ""} rendu${p.nb > 1 ? "s" : ""}</span></div>
+        <input type="text" name="nom" value="${esc(p.nom)}" aria-label="Nom du projet" required>
+        <textarea name="description" aria-label="Description" placeholder="Description pour aider le classement">${esc(p.description)}</textarea>
+        <div class="ligne-actions"><button class="btn discret" type="submit">Enregistrer</button></div>
+      </form>` : `
+      <div class="projet">
+        <div class="entete"><h2>${esc(p.nom)}</h2><span class="second">${p.nb} compte${p.nb > 1 ? "s" : ""} rendu${p.nb > 1 ? "s" : ""}</span></div>
+        <p class="second">${esc(p.description)}</p>
+      </div>`).join("");
+  }
+
+  $("#liste-projets").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    try {
+      rendreProjets(await api("/api/projets/modifier", {
+        ancien: f.dataset.ancien, nom: f.nom.value, description: f.description.value,
+      }));
+      message("Projet enregistré.");
+    } catch (err) { message(err.message); }
+  });
+
+  $("#form-projet").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      rendreProjets(await api("/api/projets", { nom: $("#np-nom").value, description: $("#np-desc").value }));
+      $("#np-nom").value = ""; $("#np-desc").value = "";
+      message("Projet créé.");
+    } catch (err) { message(err.message); }
+  });
+
+  // ---------- Réglages ----------
+  async function chargerReglages() {
+    const r = await api("/api/reglages");
+    $("#cle-etat").textContent = r.cle_definie
+      ? `Clé enregistrée : ${r.cle_apercu}. Colle une nouvelle clé pour la remplacer.`
+      : "Aucune clé enregistrée. Elle se crée sur console.anthropic.com (API Keys), et se paie à l'usage.";
+    $("#modeles").innerHTML = r.modeles.map((m) => `
+      <label class="modele">
+        <input type="radio" name="modele" value="${esc(m.id)}" ${m.id === r.modele_whisper ? "checked" : ""}>
+        <span class="nom">${esc(m.nom)}</span>
+        <span class="second">${esc(m.detail)}</span>
+      </label>`).join("");
+    $("#dossier-actuel").textContent = "Actuellement : " + r.dossier_actuel;
+    $("#dossier").value = r.dossier_personnalise;
+    $("#erreurs-etat").textContent = r.erreurs
+      ? `${r.erreurs} fichier${r.erreurs > 1 ? "s n'ont" : " n'a"} pas pu être traité${r.erreurs > 1 ? "s" : ""}. L'audio est conservé.`
+      : "Aucune erreur.";
+    $("#relancer").hidden = !r.erreurs;
+  }
+
+  $("#form-cle").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const cle = $("#cle").value.trim();
+    if (!cle) return message("Colle ta clé d'abord.");
+    try {
+      await api("/api/reglages", { cle });
+      $("#cle").value = "";
+      message("Clé enregistrée.");
+      chargerReglages(); sonder();
+    } catch (err) { message(err.message); }
+  });
+
+  $("#modeles").addEventListener("change", async (ev) => {
+    try { await api("/api/reglages", { modele_whisper: ev.target.value }); message("Modèle changé. Il se télécharge au prochain enregistrement."); }
+    catch (err) { message(err.message); }
+  });
+
+  $("#form-dossier").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      const r = await api("/api/reglages", { dossier_sortie: $("#dossier").value });
+      message(r.redemarrage ? "Enregistré. Quitte et relance MiroRecap pour l'appliquer." : "Rien n'a changé.");
+    } catch (err) { message(err.message); }
+  });
+
+  $("#relancer").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/erreurs/relancer", {});
+      message(`${r.relances} fichier(s) remis en traitement.`);
+      chargerReglages();
+    } catch (err) { message(err.message); }
+  });
+
+  // ---------- Démarrage ----------
+  sonder();
+  afficher();
+</script>
+</body>
+</html>

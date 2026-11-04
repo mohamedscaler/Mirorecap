@@ -1,0 +1,7 @@
+rumps
+sounddevice
+soundfile
+numpy
+mlx-whisper
+anthropic
+pywebview
