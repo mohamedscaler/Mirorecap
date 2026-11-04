@@ -34,6 +34,7 @@ EOF
 
 # 3. Code de l'app
 cp -R app/app.py app/fenetre.py app/VERSION app/icone.png app/ui "$RES/app/"
+cp install-distant.sh "$RES/app/"   # installateur des mises à jour, livré avec l'app
 
 # 4. Lanceur natif
 clang -O2 -fobjc-arc -arch arm64 -mmacosx-version-min=13.5 -framework Cocoa -framework UserNotifications -o "$APP/Contents/MacOS/MiroRecap" app/lanceur.m

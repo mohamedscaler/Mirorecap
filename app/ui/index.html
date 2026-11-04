@@ -490,16 +490,16 @@
             <button id="cc-deconnecter" class="bouton" type="button">Déconnecter</button>
           </div>
           <form id="form-code" class="rang" hidden>
-            <input id="cc-code" class="champ" type="text" placeholder="Colle le code affiché dans le navigateur (ou un jeton sk-ant-oat…)" autocomplete="off" spellcheck="false" aria-label="Code de connexion">
+            <input id="cc-code" class="champ" type="text" placeholder="Rien ne se passe ? Colle ici le jeton sk-ant-oat… affiché dans le Terminal" autocomplete="off" spellcheck="false" aria-label="Code de connexion">
             <button class="bouton principal" type="submit">Valider</button>
           </form>
           <div id="cc-aide" class="rang" hidden>
-            <div class="corps"><div class="d">Le navigateur ne s'est pas ouvert ?</div></div>
+            <div class="corps"><div class="d">MiroRecap détecte la fin de la connexion tout seul.</div></div>
             <button id="cc-ouvrir" class="bouton" type="button">Ouvrir la page</button>
             <button id="cc-annuler" class="bouton" type="button">Annuler</button>
           </div>
         </div>
-        <p class="note">Avec ton abonnement Claude (Pro ou Max), MiroRecap passe par Claude Code : pas de clé API, l'analyse compte dans les limites de ton abonnement. Clique sur Se connecter : le navigateur s'ouvre, tu te connectes à ton compte Claude, puis tu copies le code affiché et tu le colles ici (connexion valable un an).</p>
+        <p class="note">Avec ton abonnement Claude (Pro ou Max), MiroRecap passe par Claude Code : pas de clé API, l'analyse compte dans les limites de ton abonnement. Clique sur Se connecter : le navigateur s'ouvre, tu te connectes à ton compte Claude, puis tu colles le code affiché dans la fenêtre Terminal qui s'ouvre. MiroRecap récupère la connexion tout seul (valable un an).</p>
 
         <div id="moteurs" class="groupe" role="radiogroup" aria-label="Moteur d'analyse" style="margin-top:14px"></div>
 
@@ -1020,14 +1020,14 @@
     // Moteur d'analyse
     const libelles = { abonnement: "abonnement Claude", api: "clé API" };
     const cx = r.connexion || {};
-    const enCours = cx.etat === "installation" || cx.etat === "navigateur";
+    const enCours = cx.etat === "installation" || cx.etat === "terminal";
     $("#cc-point").classList.toggle("ok", r.claude_connecte);
     let titre, detail;
-    if (enCours) { titre = cx.etat === "installation" ? "Installation de Claude Code…" : "Connexion en cours…"; detail = cx.message; }
+    if (enCours) { titre = cx.etat === "installation" ? "Installation de Claude Code…" : "Connexion en cours dans le Terminal…"; detail = cx.message; }
     else if (r.claude_connecte) { titre = "Abonnement Claude connecté"; detail = `Analyse actuelle : ${r.moteur_effectif ? libelles[r.moteur_effectif] : "aucune"}`; }
     else { titre = "Abonnement Claude non connecté"; detail = cx.etat === "echec" ? cx.message : (r.claude_code ? "Clique sur Se connecter, le navigateur va s'ouvrir" : "Claude Code s'installera tout seul à la connexion"); }
     $("#cc-etat").innerHTML = `<div>${esc(titre)}</div><div class="d">${esc(detail)}</div>`;
-    const attenteCode = cx.etat === "navigateur";
+    const attenteCode = cx.etat === "terminal";
     $("#form-code").hidden = !attenteCode;
     $("#cc-aide").hidden = !attenteCode;
     $("#cc-ouvrir").hidden = !cx.url;
@@ -1115,7 +1115,7 @@
   });
   $("#cc-connecter").addEventListener("click", async () => {
     await api("/api/claude-code", { action: "connecter" });
-    message("Le navigateur va s'ouvrir : connecte-toi, autorise l'accès, puis copie le code affiché.");
+    message("Une fenêtre Terminal s'ouvre : suis les 2 étapes affichées.");
     chargerReglages();
   });
   $("#form-code").addEventListener("submit", async (ev) => {
@@ -1123,7 +1123,7 @@
     try {
       await api("/api/claude-code", { action: "code", code: $("#cc-code").value });
       $("#cc-code").value = "";
-      message("Code envoyé, vérification…");
+      message("Abonnement Claude connecté.");
       chargerReglages();
     } catch (err) { message(err.message); }
   });

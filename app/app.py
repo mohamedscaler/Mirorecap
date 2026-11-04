@@ -493,133 +493,98 @@ def env_claude_code():
 
 
 CONNEXION = {"etat": "", "message": "", "url": ""}   # suivi affiché dans les Réglages
-SESSION_CONNEXION = {"maitre": None, "proc": None, "code_envoye": 0}  # terminal de « claude setup-token » en cours
+
+
+FICHIER_CONNEXION = DOSSIER_APP / "connexion.log"   # sortie de setup-token, effacée aussitôt lue
 
 
 def connecter_claude_code():
-    """Installe Claude Code si besoin, puis lance « claude setup-token » : le navigateur
-    s'ouvre, l'utilisateur se connecte avec son compte Claude, et MiroRecap récupère le
-    jeton (valable un an) sans passer par le Terminal."""
-    import fcntl
-    import pty
-    import select
-    import struct
-    import termios
+    """Installe Claude Code si besoin, puis ouvre une fenêtre Terminal avec
+    « claude setup-token » : le navigateur s'ouvre, l'utilisateur se connecte, colle le
+    code dans le Terminal (c'est l'outil officiel qui le gère), et MiroRecap récupère
+    tout seul le jeton (valable un an) dans l'enregistrement de la session."""
+    import shlex
 
-    if CONNEXION["etat"] in ("installation", "navigateur"):
+    if CONNEXION["etat"] in ("installation", "terminal"):
         return  # déjà en cours
 
     def tache():
         try:
             claude = trouver_claude_code()
             if not claude:
-                CONNEXION.update(etat="installation", message="Installation de Claude Code…")
+                CONNEXION.update(etat="installation", message="Installation de Claude Code…", url="")
                 subprocess.run(["/bin/bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
                                capture_output=True, text=True, timeout=900)
                 claude = trouver_claude_code()
                 if not claude:
                     raise RuntimeError("l'installation de Claude Code a échoué")
 
-            CONNEXION.update(etat="navigateur", url="",
-                             message="Connecte-toi dans le navigateur, puis colle ici le code affiché.")
-            # setup-token veut un vrai terminal : on lui en donne un, large pour que le jeton ne soit pas coupé
-            maitre, esclave = pty.openpty()
-            fcntl.ioctl(esclave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 1000, 0, 0))
-            proc = subprocess.Popen([claude, "setup-token"], stdin=esclave, stdout=esclave, stderr=esclave,
-                                    env=env_claude_code(), close_fds=True, start_new_session=True)
-            os.close(esclave)
-            SESSION_CONNEXION.update(maitre=maitre, proc=proc)
-            sortie, fin = b"", time.time() + 900
-            texte = ""
-            while time.time() < fin:
-                # Code envoyé mais aucun jeton 45 s après : on arrête et on montre la réponse de Claude Code
-                envoye = SESSION_CONNEXION["code_envoye"]
-                if envoye and time.time() - envoye > 45:
-                    lignes = [l.strip() for l in texte.replace("\r", "\n").split("\n") if l.strip()]
-                    print("setup-token, fin de sortie :\n" + "\n".join(lignes[-8:]), flush=True)
-                    dernier = next((l for l in reversed(lignes) if "*" not in l and len(l) > 3), "pas de réponse")
-                    raise RuntimeError(f"le code n'a pas été accepté ({dernier[:160]})")
-                pret, _, _ = select.select([maitre], [], [], 1)
-                if pret:
-                    try:
-                        bloc = os.read(maitre, 4096)
-                    except OSError:
-                        break
-                    if not bloc:
-                        break
-                    sortie += bloc
-                    texte = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sortie.decode(errors="ignore"))
-                    # Lien de connexion, au cas où le navigateur ne s'est pas ouvert tout seul
-                    lien = re.search(r"https://\S*oauth/authorize\S+", texte)
-                    if lien and not CONNEXION["url"]:
-                        CONNEXION["url"] = lien.group(0)
-                    # Code refusé : Claude Code propose « Press Enter to retry ». On relance
-                    # (nouvelle page de connexion) et on repart de zéro pour la suite.
-                    if "Press Enter to retry" in texte:
-                        os.write(maitre, b"\r")
-                        sortie = b""
-                        SESSION_CONNEXION["code_envoye"] = 0
-                        CONNEXION.update(url="", message="Code refusé ou expiré. Reconnecte-toi dans la page "
-                                                         "qui vient de s'ouvrir et colle le nouveau code.")
-                        continue
-                    jeton = re.search(r"sk-ant-oat[0-9A-Za-z_\-]+", texte)
-                    if jeton:
-                        CONFIG["jeton_claude_code"] = jeton.group(0)
-                        sauver_config(CONFIG)
-                        FICHIER_CONFIG.chmod(0o600)
-                        CONNEXION.update(etat="ok", message="Connecté à ton abonnement Claude.")
-                        notifier("Abonnement Claude connecté", "MiroRecap utilise maintenant ton abonnement.")
-                        break
-                elif proc.poll() is not None:
-                    break
-            proc.terminate()
-            SESSION_CONNEXION.update(maitre=None, proc=None, code_envoye=0)
-            os.close(maitre)
+            FICHIER_CONNEXION.unlink(missing_ok=True)
+            commande = DOSSIER_APP / "Connexion à Claude.command"
+            # « script » enregistre la session tout en gardant un vrai terminal ;
+            # fenêtre élargie à 220 colonnes pour que le jeton tienne sur une ligne
+            commande.write_text(f"""#!/bin/bash
+printf '\\e[8;30;220t'
+clear
+echo "MiroRecap · connexion à ton abonnement Claude"
+echo
+echo "  1. Connecte-toi dans le navigateur qui s'ouvre et autorise l'accès"
+echo "  2. Copie le code affiché, colle-le ici puis appuie sur Entrée"
+echo
+unset ANTHROPIC_API_KEY
+script -q -F {shlex.quote(str(FICHIER_CONNEXION))} {shlex.quote(claude)} setup-token
+echo
+echo "Terminé : tu peux fermer cette fenêtre et revenir dans MiroRecap."
+""", encoding="utf-8")
+            commande.chmod(0o700)
+            subprocess.run(["open", "-a", "Terminal", str(commande)], check=False)
+            CONNEXION.update(etat="terminal", url="",
+                             message="Suis les 2 étapes dans la fenêtre Terminal qui vient de s'ouvrir.")
+
+            fin = time.time() + 900
+            while time.time() < fin and CONNEXION["etat"] == "terminal":
+                time.sleep(1)
+                if not FICHIER_CONNEXION.exists():
+                    continue
+                texte = FICHIER_CONNEXION.read_text(encoding="utf-8", errors="ignore")
+                texte = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07", "", texte)
+                jeton = re.search(r"sk-ant-oat[0-9A-Za-z_\-]{20,}", texte)
+                if jeton:
+                    time.sleep(1)   # laisse le jeton finir de s'écrire
+                    texte = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "",
+                                   FICHIER_CONNEXION.read_text(encoding="utf-8", errors="ignore"))
+                    jeton = re.search(r"sk-ant-oat[0-9A-Za-z_\-]{20,}", texte)
+                    CONFIG["jeton_claude_code"] = jeton.group(0)
+                    sauver_config(CONFIG)
+                    CONNEXION.update(etat="ok", message="Connecté à ton abonnement Claude.")
+                    notifier("Abonnement Claude connecté", "MiroRecap utilise maintenant ton abonnement.")
+                    return
             if CONNEXION["etat"] == "annule":
-                CONNEXION.update(etat="", message="", url="")
+                CONNEXION.update(etat="", message="")
                 return
-            if CONNEXION["etat"] != "ok":
-                raise RuntimeError("connexion non terminée (fenêtre du navigateur fermée ou délai dépassé)")
+            if CONNEXION["etat"] == "terminal":
+                raise RuntimeError("connexion non terminée (délai dépassé)")
         except Exception as e:
-            proc_en_cours = SESSION_CONNEXION.get("proc")
-            if proc_en_cours and proc_en_cours.poll() is None:
-                proc_en_cours.terminate()
-            SESSION_CONNEXION.update(maitre=None, proc=None, code_envoye=0)
             print(f"Connexion Claude Code : {e}", flush=True)
             CONNEXION.update(etat="echec", message=f"Échec : {e}")
+        finally:
+            FICHIER_CONNEXION.unlink(missing_ok=True)   # le jeton ne reste pas sur le disque
 
     threading.Thread(target=tache, daemon=True).start()
 
 
 def envoyer_code_claude(code):
-    """Transmet à « claude setup-token » le code affiché par le navigateur après la connexion."""
+    """Jeton collé à la main (affiché par « claude setup-token » à la fin)."""
     code = (code or "").strip()
-    # Jeton collé directement (obtenu avec « claude setup-token » dans le Terminal)
-    if re.fullmatch(r"sk-ant-oat[0-9A-Za-z_\-]+", code):
-        CONFIG["jeton_claude_code"] = code
-        sauver_config(CONFIG)
-        annuler_connexion_claude()
-        CONNEXION.update(etat="ok", message="Connecté à ton abonnement Claude.", url="")
-        return
-    maitre = SESSION_CONNEXION["maitre"]
-    if not code:
-        raise ValueError("colle le code affiché dans le navigateur")
-    if maitre is None:
-        raise ValueError("aucune connexion en cours, clique d'abord sur Se connecter")
-    os.write(maitre, code.encode())
-    time.sleep(0.3)                      # le code puis Entrée séparément, comme au clavier
-    os.write(maitre, b"\r")
-    SESSION_CONNEXION["code_envoye"] = time.time()
-    CONNEXION["message"] = "Vérification du code…"
+    if not re.fullmatch(r"sk-ant-oat[0-9A-Za-z_\-]{20,}", code):
+        raise ValueError("colle le jeton complet affiché à la fin dans le Terminal (il commence par sk-ant-oat)")
+    CONFIG["jeton_claude_code"] = code
+    sauver_config(CONFIG)
+    CONNEXION.update(etat="ok", message="Connecté à ton abonnement Claude.", url="")
 
 
 def annuler_connexion_claude():
-    proc = SESSION_CONNEXION["proc"]
-    if proc and proc.poll() is None:
-        CONNEXION["etat"] = "annule"
-        proc.terminate()
-    else:
-        CONNEXION.update(etat="", message="", url="")
+    CONNEXION.update(etat="annule" if CONNEXION["etat"] == "terminal" else "", message="", url="")
 
 
 def deconnecter_claude_code():
@@ -1385,21 +1350,49 @@ class App(rumps.App):
             notifier("Mise à jour impossible pour l'instant", str(e))
             return
 
-        # 2. Installation : l'installateur arrête l'app, la remplace et la relance
+        # 2. Installation, comme les apps Mac classiques : on lance l'installateur, puis
+        #    l'app se ferme d'elle-même. L'installateur attend qu'elle soit vraiment
+        #    arrêtée avant de remplacer quoi que ce soit, puis relance la nouvelle version.
         self.maj_progression["phase"] = "installation"
         CONFIG["version_precedente"] = VERSION   # pour annoncer la nouveauté au redémarrage
         sauver_config(CONFIG)
-        env = dict(os.environ, MIRORECAP_DMG=str(dmg))
+        pids = [os.getpid()]
+        if os.environ.get("MIRORECAP_LANCEUR") == "1":
+            pids.append(os.getppid())            # le lanceur natif
+        if self.fenetre and self.fenetre.poll() is None:
+            pids.append(self.fenetre.pid)
+        env = dict(os.environ, MIRORECAP_DMG=str(dmg), MIRORECAP_PIDS=" ".join(map(str, pids)))
         if automatique:
             env["MIRORECAP_DISCRET"] = "1"   # relance sans ouvrir la fenêtre
+        # Installateur livré avec l'app, copié hors du bundle (le bundle va être remplacé)
+        embarque = DOSSIER_CODE / "install-distant.sh"
+        if embarque.exists():
+            installateur = dossier / "installer.sh"
+            shutil.copy(embarque, installateur)
+            commande = ["/bin/bash", str(installateur)]
+        else:
+            commande = ["/bin/bash", "-c", f'curl -fsSL "{URL_INSTALL}" | bash']
         journal = open(DOSSIER_APP / "maj.log", "w")
-        # Session séparée : l'installateur survit à l'arrêt de l'app.
-        # Si l'installation échoue, on relance au moins l'app existante.
-        subprocess.Popen(
-            ["/bin/bash", "-c", f'curl -fsSL "{URL_INSTALL}" | bash || open -a MiroRecap'],
-            stdin=subprocess.DEVNULL, stdout=journal, stderr=subprocess.STDOUT,
-            start_new_session=True, env=env,
-        )
+        # Session séparée : l'installateur survit à la fermeture de l'app
+        subprocess.Popen(commande, stdin=subprocess.DEVNULL, stdout=journal, stderr=subprocess.STDOUT,
+                         start_new_session=True, env=env)
+        time.sleep(1.5)   # laisse la fenêtre afficher « Installation… »
+        self.fermer_pour_maj()
+
+    def fermer_pour_maj(self):
+        """Ferme l'app proprement pour laisser l'installateur la remplacer."""
+        try:
+            if self.fenetre and self.fenetre.poll() is None:
+                self.fenetre.terminate()
+                self.fenetre.wait(timeout=3)
+        except Exception:
+            pass
+        try:
+            self.serveur.shutdown()
+        except Exception:
+            pass
+        sys.stdout.flush()
+        os._exit(0)   # le lanceur natif s'arrête avec nous
 
     def basculer_enregistrement(self):
         with self.verrou:
