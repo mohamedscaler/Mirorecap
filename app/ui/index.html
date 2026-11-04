@@ -577,6 +577,17 @@
         </div>
         <p class="note">Optionnelle. Facturée à l'usage par OpenAI, indépendamment de ChatGPT Plus.</p>
 
+        <p class="titre-groupe">Claude peut lire tes comptes rendus</p>
+        <div class="groupe">
+          <div class="rang">
+            <span id="mcp-point" class="point"></span>
+            <div class="corps" id="mcp-etat"></div>
+            <button id="mcp-connecter" class="bouton principal" type="button">Connecter</button>
+            <button id="mcp-deconnecter" class="bouton" type="button">Déconnecter</button>
+          </div>
+        </div>
+        <p class="note">Ajoute MiroRecap aux connecteurs de l'app Claude sur ce Mac (et de Claude Code). Tu peux ensuite demander à Claude : « Qu'est-ce qu'on a dit avec la boulangerie Martin ? », « Quelles actions il me reste ? », « Prépare le devis à partir de mon dernier appel avec Paul ». Lecture seule, tout reste sur ton Mac. Quitte et rouvre l'app Claude après avoir connecté.</p>
+
         <p class="titre-groupe">Ton contexte</p>
         <form id="form-contexte" class="groupe contexte">
           <div class="rang colonne">
@@ -1288,6 +1299,13 @@
     $("#gpt-ouvrir").hidden = !gx.url;
     clearTimeout(window.suiviGpt);
     if (gptEnCours) window.suiviGpt = setTimeout(() => { if (!$("#vue-reglages").hidden) chargerReglages(); }, 2000);
+    // Connecteur pour Claude
+    $("#mcp-point").classList.toggle("ok", r.mcp_installe);
+    $("#mcp-etat").innerHTML = r.mcp_installe
+      ? `<div>Connecté à l'app Claude</div><div class="d">Quitte et rouvre Claude si tu viens de connecter</div>`
+      : `<div>Non connecté</div><div class="d">Claude ne voit pas encore tes comptes rendus</div>`;
+    $("#mcp-connecter").hidden = r.mcp_installe;
+    $("#mcp-deconnecter").hidden = !r.mcp_installe;
     // Clé OpenAI
     $("#cle-openai-point").classList.toggle("ok", r.cle_openai_definie);
     $("#cle-openai-etat").innerHTML = r.cle_openai_definie
@@ -1406,6 +1424,14 @@
   $("#cc-annuler").addEventListener("click", async () => {
     await api("/api/claude-code", { action: "annuler" });
     setTimeout(chargerReglages, 600);
+  });
+  $("#mcp-connecter").addEventListener("click", async () => {
+    try { await api("/api/mcp", { action: "connecter" }); message("C'est fait : quitte et rouvre l'app Claude, puis demande-lui ce que tu veux sur tes appels."); chargerReglages(); }
+    catch (err) { message(err.message); }
+  });
+  $("#mcp-deconnecter").addEventListener("click", async () => {
+    try { await api("/api/mcp", { action: "deconnecter" }); message("Claude n'a plus accès à tes comptes rendus."); chargerReglages(); }
+    catch (err) { message(err.message); }
   });
   $("#gpt-connecter").addEventListener("click", async () => {
     await api("/api/chatgpt", { action: "connecter" });

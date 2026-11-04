@@ -1164,6 +1164,87 @@ def deconnecter_chatgpt():
     CONNEXION_GPT.update(etat="", message="", url="")
 
 
+# --- Connecteur pour Claude (MCP) : Claude lit tes comptes rendus ------------------
+
+LANCEUR_MCP = DOSSIER_APP / "mcp.py"
+CONFIG_CLAUDE_DESKTOP = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+
+
+def python_moteur():
+    """Python de l'app (dans le bundle) : celui qui lancera le connecteur."""
+    candidat = CODE_APP.parent / "python" / "bin" / "python3"
+    return str(candidat if candidat.exists() else Path(sys.executable))
+
+
+def ecrire_lanceur_mcp():
+    """Petit script stable lancé par Claude : il prend le connecteur du code le plus récent
+    (mise à jour légère ou app), donc il reste valable après chaque mise à jour."""
+    LANCEUR_MCP.parent.mkdir(parents=True, exist_ok=True)
+    LANCEUR_MCP.write_text(f"""# Connecteur MiroRecap pour Claude (généré par MiroRecap, ne pas modifier)
+import runpy
+from pathlib import Path
+
+def version(d):
+    try:
+        return tuple(int(x) for x in (d / "VERSION").read_text().strip().split("."))
+    except Exception:
+        return (0,)
+
+candidats = [Path.home() / "Library" / "Application Support" / "MiroRecap" / "code" / "actuel", Path({str(CODE_APP)!r})]
+valides = [d for d in candidats if (d / "mcp_serveur.py").exists() and not (d / ".defectueux").exists()]
+runpy.run_path(str(max(valides, key=version) / "mcp_serveur.py"), run_name="__main__")
+""", encoding="utf-8")
+
+
+def mcp_installe():
+    try:
+        config = json.loads(CONFIG_CLAUDE_DESKTOP.read_text(encoding="utf-8"))
+        return "mirorecap" in (config.get("mcpServers") or {})
+    except Exception:
+        return False
+
+
+def connecter_mcp():
+    """Ajoute MiroRecap aux connecteurs de l'app Claude (Mac) et de Claude Code."""
+    ecrire_lanceur_mcp()
+    entree = {"command": python_moteur(), "args": [str(LANCEUR_MCP)]}
+    # App Claude : fichier de configuration des connecteurs locaux (copie de sécurité d'abord)
+    config = {}
+    if CONFIG_CLAUDE_DESKTOP.exists():
+        texte = CONFIG_CLAUDE_DESKTOP.read_text(encoding="utf-8")
+        try:
+            config = json.loads(texte) if texte.strip() else {}
+        except json.JSONDecodeError:
+            raise RuntimeError("le fichier de configuration de Claude est illisible, MiroRecap n'y touche pas")
+        sauvegarde = CONFIG_CLAUDE_DESKTOP.with_name("claude_desktop_config.avant-mirorecap.json")
+        if not sauvegarde.exists():
+            sauvegarde.write_text(texte, encoding="utf-8")
+    CONFIG_CLAUDE_DESKTOP.parent.mkdir(parents=True, exist_ok=True)
+    config.setdefault("mcpServers", {})["mirorecap"] = entree
+    CONFIG_CLAUDE_DESKTOP.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Claude Code (s'il est installé), pour tous les dossiers
+    claude = trouver_claude_code()
+    if claude:
+        subprocess.run([claude, "mcp", "remove", "--scope", "user", "mirorecap"], capture_output=True, timeout=30)
+        subprocess.run([claude, "mcp", "add", "--scope", "user", "mirorecap", "--", entree["command"], *entree["args"]],
+                       capture_output=True, timeout=30)
+    return {"ok": True}
+
+
+def deconnecter_mcp():
+    if CONFIG_CLAUDE_DESKTOP.exists():
+        try:
+            config = json.loads(CONFIG_CLAUDE_DESKTOP.read_text(encoding="utf-8"))
+            (config.get("mcpServers") or {}).pop("mirorecap", None)
+            CONFIG_CLAUDE_DESKTOP.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+    claude = trouver_claude_code()
+    if claude:
+        subprocess.run([claude, "mcp", "remove", "--scope", "user", "mirorecap"], capture_output=True, timeout=30)
+    return {"ok": True}
+
+
 def annuler_connexion_chatgpt():
     CONNEXION_GPT.update(etat="annule" if CONNEXION_GPT["etat"] == "navigateur" else "", message="", url="")
 
@@ -1504,6 +1585,7 @@ def lire_reglages():
         "signature_mail": CONFIG.get("signature_mail", ""),
         "accueil_fait": bool(CONFIG.get("accueil_fait")),
         "modele_choisi": bool(CONFIG.get("modele_choisi")),
+        "mcp_installe": mcp_installe(),
     }
 
 
@@ -1632,6 +1714,9 @@ class Api(http.server.BaseHTTPRequestHandler):
                 return self._json(200, tester_micro())
             if self.path == "/api/test-son":
                 return self._json(200, tester_son_systeme())
+            if self.path == "/api/mcp":
+                (deconnecter_mcp if d.get("action") == "deconnecter" else connecter_mcp)()
+                return self._json(200, lire_reglages())
             if self.path == "/api/quitter":
                 return self._json(200, self.app.quitter_depuis_fenetre())
             if self.path == "/api/supprimer":
@@ -1769,6 +1854,11 @@ class App(rumps.App):
         # Code téléchargé lancé avec succès : le démarreur ne le comptera pas comme raté
         if DOSSIER_CODE != CODE_APP:
             threading.Timer(10, lambda: (DOSSIER_CODE / ".essais").unlink(missing_ok=True)).start()
+        if LANCEUR_MCP.exists():
+            try:
+                ecrire_lanceur_mcp()
+            except Exception:
+                pass
         # Juste après une mise à jour : on l'annonce
         precedente = CONFIG.pop("version_precedente", None)
         if precedente and precedente != VERSION:
