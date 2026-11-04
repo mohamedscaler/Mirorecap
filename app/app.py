@@ -658,6 +658,30 @@ def texte_progression():
     return f"{MODELE['fait'] // 1_000_000} Mo"
 
 
+# Avancement du traitement en cours, affiché dans la fenêtre (ligne grisée + barre en haut)
+TRAITEMENT = {"etape": "", "progression": None, "duree_audio": 0, "debut": "", "date": ""}
+
+
+class _SuiviTranscription:
+    """Remplace la barre de progression texte de Whisper : on récupère l'avancement réel."""
+    def __init__(self, total=0, **_):
+        self.total, self.n = (total or 1), 0
+        TRAITEMENT["progression"] = 0.0
+
+    def update(self, n=1):
+        self.n += n
+        TRAITEMENT["progression"] = min(1.0, self.n / self.total)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def close(self):
+        pass
+
+
 def transcrire(chemin_audio):
     """Retourne la transcription horodatée : '[mm:ss] texte' par ligne.
     Au premier usage d'un modèle, ses fichiers sont téléchargés (~/.cache/huggingface)."""
@@ -674,11 +698,18 @@ def transcrire(chemin_audio):
         if r.returncode != 0:
             raise RuntimeError(f"format audio illisible ({r.stderr.strip() or chemin_audio.suffix})")
         audio, _ = sf.read(str(wav), dtype="float32")
+    TRAITEMENT["duree_audio"] = int(len(audio) / 16000)
 
+    # Suivi de l'avancement : Whisper fait avancer notre compteur au lieu d'une barre texte
+    import types
+    module = sys.modules.get("mlx_whisper.transcribe")
+    if module is not None and hasattr(module, "tqdm"):
+        module.tqdm = types.SimpleNamespace(tqdm=_SuiviTranscription)
     resultat = mlx_whisper.transcribe(
         audio,
         path_or_hf_repo=str(assurer_modele()),
         language=CONFIG["langue"],
+        verbose=False,   # active le suivi (sans rien afficher)
     )
     lignes = []
     for seg in resultat.get("segments", []):
@@ -2119,6 +2150,7 @@ class App(rumps.App):
             "modele": MODELE,
             "choix_modele": not CONFIG.get("modele_choisi"),
             "accueil": not CONFIG.get("accueil_fait"),
+            "traitement": dict(TRAITEMENT) if TRAITEMENT["etape"] else None,
             "appel_detecte": (self.detecteur.appel if getattr(self, "detecteur", None) and not self.enreg.actif else None),
             "son_systeme": SON_SYSTEME,
         }
@@ -2467,6 +2499,9 @@ class App(rumps.App):
         while True:
             chemin, date = self.file_traitement.get()
             transcription = None
+            TRAITEMENT.update(etape="preparation", progression=None, duree_audio=0,
+                              debut=dt.datetime.now().isoformat(timespec="seconds"),
+                              date=date.isoformat(timespec="minutes"))
             try:
                 systeme = self.pistes_systeme.pop(chemin, None)
                 if systeme:
@@ -2479,12 +2514,15 @@ class App(rumps.App):
                         systeme.unlink(missing_ok=True)
                 if MODELE["etat"] != "pret":
                     self.statut = "Téléchargement de Whisper…"
+                    TRAITEMENT.update(etape="modele", progression=None)
                     assurer_modele()
                 self.statut = "Transcription…"
+                TRAITEMENT.update(etape="transcription", progression=0.0)
                 transcription = transcrire(chemin)
                 if not transcription:
                     raise ValueError("aucune parole détectée")
                 self.statut = "Analyse…"
+                TRAITEMENT.update(etape="analyse", progression=None)
                 analyse = analyser(transcription, date)
                 md = ranger(chemin, date, transcription, analyse)
                 self.dernier = {"projet": analyse["projet"], "fichier": md.name, "titre": analyse["titre"]}
@@ -2504,6 +2542,7 @@ class App(rumps.App):
                     destination.with_suffix(".txt").write_text(transcription, encoding="utf-8")
                 notifier("Erreur de traitement", f"{chemin.name} : {e}")
             finally:
+                TRAITEMENT.update(etape="", progression=None)
                 self.en_file.discard(chemin)
                 self.tailles.pop(chemin, None)
                 self.statut = ""

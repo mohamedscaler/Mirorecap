@@ -294,6 +294,17 @@
   .rang.colonne label { font-weight: 500; font-size: 12px; }
   .contexte textarea, #accueil textarea { width: 100%; resize: vertical; font: inherit; color: inherit; background: var(--champ, rgba(128,128,128,.12)); border: 1px solid var(--separateur, rgba(128,128,128,.25)); border-radius: 8px; padding: 8px 10px; box-sizing: border-box; }
   .bouton.danger { color: var(--rouge, #FF453A); }
+  /* Traitement en cours : ligne grisée en haut de la liste + barre fine en haut de la fenêtre */
+  main { position: relative; }
+  .barre-haut { position: absolute; top: 0; left: 18px; right: 18px; height: 3px; border-radius: 2px; overflow: hidden; z-index: 5; background: rgba(10,132,255,.12); }
+  .barre-haut span, .mini-barre span { display: block; height: 100%; width: 0; background: var(--bleu); border-radius: 2px; transition: width .8s ease; }
+  .barre-haut.indetermine span, .mini-barre.indetermine span { width: 35% !important; animation: glisse 1.4s ease-in-out infinite; }
+  @keyframes glisse { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+  .en-cours { margin: 0 8px 6px; padding: 9px 10px; border-radius: 12px; background: rgba(128,128,128,.10); opacity: .75; }
+  .en-cours .t { font-weight: 600; }
+  .en-cours .m { font-size: 12px; color: var(--second); margin-top: 1px; }
+  .mini-barre { height: 3px; margin-top: 7px; border-radius: 2px; overflow: hidden; background: rgba(128,128,128,.2); }
+  @media (prefers-reduced-motion: reduce) { .barre-haut.indetermine span, .mini-barre.indetermine span { animation: none; width: 100% !important; opacity: .5; } }
   .bandeau.appel .pastille-rec { width: 10px; height: 10px; border-radius: 50%; background: var(--rouge); box-shadow: 0 0 0 4px rgba(255, 69, 58, .2); animation: battement 1.6s ease-in-out infinite; }
   @keyframes battement { 50% { box-shadow: 0 0 0 7px rgba(255, 69, 58, .08); } }
   @media (prefers-reduced-motion: reduce) { .bandeau.appel .pastille-rec { animation: none; } }
@@ -455,6 +466,7 @@
 
 <!-- ============ Contenu ============ -->
 <main>
+  <div id="barre-haut" class="barre-haut" hidden><span></span></div>
   <div id="bandeau-maj" class="bandeau maj" hidden>
     <svg class="icone" width="18" height="18"><use href="#i-fleche"/></svg>
     <div class="texte">
@@ -490,6 +502,11 @@
           <svg width="13" height="13"><use href="#i-loupe"/></svg>
           <input id="recherche" class="champ" type="search" placeholder="Rechercher" aria-label="Rechercher">
         </div>
+      </div>
+      <div id="en-cours" class="en-cours" hidden aria-live="polite">
+        <div class="t">Nouvel enregistrement</div>
+        <div class="m" id="en-cours-etape">Préparation…</div>
+        <div class="mini-barre" id="en-cours-barre"><span></span></div>
       </div>
       <ul id="liste" class="liste"></ul>
       <div id="barre-selection" class="barre-selection" hidden>
@@ -955,6 +972,23 @@
     }
 
     $("#alerte").hidden = e.cle_ok;
+
+    // Traitement en cours : ligne grisée + barre en haut
+    const tr = e.traitement;
+    $("#en-cours").hidden = !tr;
+    $("#barre-haut").hidden = !tr;
+    if (tr) {
+      const etapes = { preparation: "Préparation de l'audio…", modele: "Téléchargement du modèle de transcription…",
+                       transcription: "Transcription", analyse: "Rédaction du compte rendu…" };
+      const pct = tr.progression == null ? null : Math.round(tr.progression * 100);
+      const duree = tr.duree_audio ? ` · ${Math.max(1, Math.round(tr.duree_audio / 60))} min d'audio` : "";
+      $("#en-cours-etape").textContent = (pct == null ? etapes[tr.etape] : `${etapes[tr.etape]} · ${pct} %`) + duree
+        + (e.en_attente ? ` · ${e.en_attente} en attente` : "");
+      for (const id of ["#barre-haut", "#en-cours-barre"]) {
+        $(id).classList.toggle("indetermine", pct == null);
+        $(id + " span").style.width = pct == null ? "" : pct + "%";
+      }
+    }
 
     // Appel en cours détecté (micro utilisé par une autre app)
     const ap = e.appel_detecte;
