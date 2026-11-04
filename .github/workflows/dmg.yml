@@ -1,10 +1,10 @@
 # Construit MiroRecap.dmg sur un Mac Apple Silicon de GitHub et l'attache à la release.
-# Déclenchement : publier une release (ou pousser un tag v*) sur GitHub.
+# Déclenchement : publier une release (tag vX.Y) sur GitHub.
 name: Construire le DMG
 
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
