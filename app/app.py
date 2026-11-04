@@ -112,19 +112,20 @@ for _d in (DOSSIER_IMPORT, DOSSIER_ENREG, DOSSIER_ERREURS, DOSSIER_SORTIE / PROJ
 # ---------------------------------------------------------------------------
 
 def notifier(titre, message):
-    """Notification macOS au nom de MiroRecap (un clic ouvre la fenêtre).
-    Repli sur osascript si le centre de notifications n'est pas disponible."""
+    """Notification au nom de MiroRecap (nom et logo de l'app, un clic ouvre la fenêtre).
+    Dans l'app installée, c'est le lanceur natif qui l'affiche ; jamais de script ni de Python."""
+    if os.environ.get("MIRORECAP_LANCEUR") == "1":
+        try:
+            from Foundation import NSDistributedNotificationCenter
+            NSDistributedNotificationCenter.defaultCenter().postNotificationName_object_userInfo_deliverImmediately_(
+                "fr.mirorecap.notifier", None, {"titre": titre, "message": message}, True)
+            return
+        except Exception:
+            pass
     try:
         rumps.notification("MiroRecap", titre, message, sound=False)
-        return
     except Exception:
-        pass
-    def echapper(s):
-        return s.replace("\\", "\\\\").replace('"', '\\"')
-    subprocess.run(
-        ["osascript", "-e", f'display notification "{echapper(message)}" with title "{echapper(titre)}"'],
-        check=False,
-    )
+        pass  # pas de notification plutôt qu'une notification au nom d'un autre programme
 
 
 def slugifier(texte, longueur_max=60):
@@ -660,14 +661,6 @@ def lire_reglages():
         "claude_connecte": bool(CONFIG.get("jeton_claude_code")),
         "connexion": CONNEXION,
     }
-
-
-def ouvrir_terminal(commande):
-    """Ouvre le Terminal et y lance une commande (installation / connexion de Claude Code)."""
-    commande = commande.replace("\\", "\\\\").replace('"', '\\"')
-    subprocess.run(["osascript",
-                    "-e", f'tell application "Terminal" to do script "{commande}"',
-                    "-e", 'tell application "Terminal" to activate'], check=False)
 
 
 def sauver_reglages(donnees):

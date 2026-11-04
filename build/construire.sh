@@ -36,7 +36,7 @@ EOF
 cp -R app/app.py app/fenetre.py app/VERSION app/icone.png app/ui "$RES/app/"
 
 # 4. Lanceur natif
-clang -O2 -fobjc-arc -arch arm64 -mmacosx-version-min=13.5 -framework Cocoa -o "$APP/Contents/MacOS/MiroRecap" app/lanceur.m
+clang -O2 -fobjc-arc -arch arm64 -mmacosx-version-min=13.5 -framework Cocoa -framework UserNotifications -o "$APP/Contents/MacOS/MiroRecap" app/lanceur.m
 
 # 5. Icône
 ICONSET="dist/MiroRecap.iconset"

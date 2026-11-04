@@ -7,12 +7,15 @@
  *   Applications, le Launchpad ou Spotlight alors qu'elle tourne déjà, macOS lui
  *   envoie « réouvrir » et elle demande à Python d'afficher la fenêtre (SIGUSR1).
  * - Lancée au démarrage du Mac avec --demarrage : elle reste discrète.
+ * - Affiche les notifications au nom de MiroRecap : Python les lui transmet par une
+ *   notification distribuée « fr.mirorecap.notifier » ; un clic ouvre la fenêtre.
  *
  * Tout est dans le bundle :
  *   MiroRecap.app/Contents/Resources/python   → Python autonome + modules
  *   MiroRecap.app/Contents/Resources/app      → code de l'app (app.py, ui…)
  */
 #import <Cocoa/Cocoa.h>
+#import <UserNotifications/UserNotifications.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
@@ -24,10 +27,48 @@
 extern char **environ;
 static pid_t enfant = 0;
 
-@interface Delegue : NSObject <NSApplicationDelegate>
+@interface Delegue : NSObject <NSApplicationDelegate, UNUserNotificationCenterDelegate>
 @end
 
 @implementation Delegue
+- (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    UNUserNotificationCenter *centre = [UNUserNotificationCenter currentNotificationCenter];
+    centre.delegate = self;
+    [centre requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
+                          completionHandler:^(BOOL accorde, NSError *erreur) {}];
+    [[NSDistributedNotificationCenter defaultCenter] addObserver:self
+                                                        selector:@selector(afficherNotification:)
+                                                            name:@"fr.mirorecap.notifier"
+                                                          object:nil
+                                              suspensionBehavior:NSNotificationSuspensionBehaviorDeliverImmediately];
+}
+
+// Demande de Python : on affiche la notification au nom de l'app
+- (void)afficherNotification:(NSNotification *)demande {
+    NSDictionary *infos = demande.userInfo;
+    UNMutableNotificationContent *contenu = [UNMutableNotificationContent new];
+    contenu.title = infos[@"titre"] ?: @"MiroRecap";
+    contenu.body = infos[@"message"] ?: @"";
+    UNNotificationRequest *requete = [UNNotificationRequest requestWithIdentifier:[NSUUID UUID].UUIDString
+                                                                          content:contenu trigger:nil];
+    [[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:requete withCompletionHandler:nil];
+}
+
+// Afficher la bannière même quand MiroRecap est au premier plan
+- (void)userNotificationCenter:(UNUserNotificationCenter *)centre
+       willPresentNotification:(UNNotification *)notification
+         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))fin {
+    fin(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList);
+}
+
+// Clic sur une notification : on ouvre la fenêtre
+- (void)userNotificationCenter:(UNUserNotificationCenter *)centre
+didReceiveNotificationResponse:(UNNotificationResponse *)reponse
+         withCompletionHandler:(void (^)(void))fin {
+    if (enfant > 0) kill(enfant, SIGUSR1);
+    fin();
+}
+
 // Clic sur l'icône de l'app alors qu'elle tourne : on demande la fenêtre
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)app hasVisibleWindows:(BOOL)visibles {
     if (enfant > 0) kill(enfant, SIGUSR1);
@@ -56,6 +97,7 @@ int main(int argc, const char *argv[]) {
                           NSHomeDirectory(), ancien ? ancien : "/usr/bin:/bin:/usr/sbin:/sbin"];
         setenv("PATH", path.UTF8String, 1);
         setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
+        setenv("MIRORECAP_LANCEUR", "1", 1);  /* Python sait que le lanceur gère les notifications */
 
         /* Ouvert par l'utilisateur (pas au démarrage du Mac) : on affiche la fenêtre */
         BOOL demarrage = NO;
