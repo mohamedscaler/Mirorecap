@@ -76,6 +76,8 @@ CONFIG_DEFAUT = {
     "dossier_sortie": "",
     "modele_whisper": MODELE_RECOMMANDE,
     "modele_choisi": False,   # le modèle Whisper est choisi au premier lancement
+    # Durée de conservation des audios rangés, en jours (0 = toujours). Les comptes rendus restent.
+    "conservation_audio": 0,
     "modele_claude": "claude-sonnet-5-5",
     # Moteur d'analyse : "auto" (abonnement si Claude Code est installé, sinon clé API),
     # "abonnement" (Claude Code, compte Claude Pro/Max) ou "api" (clé API Anthropic)
@@ -843,11 +845,101 @@ def liste_comptes_rendus():
     return elements
 
 
-def lire_compte_rendu(projet, fichier):
-    if not fichier.endswith(".md") or "/" in fichier:
+def chemin_compte_rendu(projet, fichier):
+    if not fichier.endswith(".md") or "/" in fichier or fichier.startswith(("_", ".")):
         raise ValueError("fichier invalide")
     chemin = dossier_projet(projet) / fichier
-    return {"markdown": chemin.read_text(encoding="utf-8")}
+    if not chemin.exists():
+        raise ValueError("compte rendu introuvable")
+    return chemin
+
+
+def audio_du_compte_rendu(md):
+    """Fichier audio lié à un compte rendu (ligne « Audio » du .md), s'il existe encore."""
+    m = re.search(r"\(audio/([^)/]+)\)", md.read_text(encoding="utf-8"))
+    if m:
+        audio = md.parent / "audio" / m.group(1)
+        if audio.exists():
+            return audio
+    return None
+
+
+def mettre_a_la_corbeille(chemin):
+    """Envoie un fichier dans la Corbeille du Mac (récupérable), sinon le supprime."""
+    try:
+        from Foundation import NSFileManager, NSURL
+        ok, _, _ = NSFileManager.defaultManager().trashItemAtURL_resultingItemURL_error_(
+            NSURL.fileURLWithPath_(str(chemin)), None, None)
+        if ok:
+            return
+    except Exception:
+        pass
+    corbeille = Path.home() / ".Trash"
+    if corbeille.is_dir():
+        shutil.move(str(chemin), str(chemin_libre(corbeille / chemin.name)))
+    else:
+        chemin.unlink(missing_ok=True)
+
+
+def marquer_audio_supprime(md, raison="supprimé"):
+    texte = md.read_text(encoding="utf-8")
+    texte = re.sub(r"^- \*\*Audio\*\* : .*$", f"- **Audio** : {raison}", texte, count=1, flags=re.M)
+    md.write_text(texte, encoding="utf-8")
+
+
+def supprimer_audio(projet, fichier):
+    md = chemin_compte_rendu(projet, fichier)
+    audio = audio_du_compte_rendu(md)
+    if not audio:
+        raise ValueError("pas d'audio pour ce compte rendu")
+    mettre_a_la_corbeille(audio)
+    marquer_audio_supprime(md, f"supprimé le {dt.datetime.now():%d/%m/%Y}")
+    return {"ok": True}
+
+
+def supprimer_compte_rendu(projet, fichier):
+    md = chemin_compte_rendu(projet, fichier)
+    audio = audio_du_compte_rendu(md)
+    if audio:
+        mettre_a_la_corbeille(audio)
+    mettre_a_la_corbeille(md)
+    return {"ok": True}
+
+
+def nettoyer_audios():
+    """Envoie à la Corbeille les audios rangés plus vieux que la durée choisie.
+    Les comptes rendus et leurs transcriptions restent."""
+    jours = int(CONFIG.get("conservation_audio") or 0)
+    if jours <= 0 or not DOSSIER_SORTIE.exists():
+        return 0
+    limite = time.time() - jours * 86400
+    supprimes = 0
+    for projet in DOSSIER_SORTIE.iterdir():
+        dossier_audio = projet / "audio"
+        if projet.name.startswith(("_", ".")) or not dossier_audio.is_dir():
+            continue
+        anciens = [a for a in dossier_audio.iterdir()
+                   if a.is_file() and not a.name.startswith(".") and a.stat().st_mtime < limite]
+        if not anciens:
+            continue
+        noms = {a.name for a in anciens}
+        for a in anciens:
+            mettre_a_la_corbeille(a)
+            supprimes += 1
+        # La ligne « Audio » des comptes rendus concernés l'indique
+        for md in projet.glob("*.md"):
+            m = re.search(r"\(audio/([^)/]+)\)", md.read_text(encoding="utf-8"))
+            if m and m.group(1) in noms:
+                marquer_audio_supprime(md, f"supprimé automatiquement après {jours} jours")
+    if supprimes:
+        print(f"Conservation : {supprimes} audio(s) de plus de {jours} jours mis à la corbeille", flush=True)
+    return supprimes
+
+
+def lire_compte_rendu(projet, fichier):
+    chemin = chemin_compte_rendu(projet, fichier)
+    return {"markdown": chemin.read_text(encoding="utf-8"),
+            "audio": audio_du_compte_rendu(chemin) is not None}
 
 
 def compter_cr(dossier):
@@ -1039,6 +1131,7 @@ def lire_reglages():
         "connexion": CONNEXION,
         "son_systeme": CONFIG.get("son_systeme", True),
         "maj_auto": CONFIG.get("maj_auto", True),
+        "conservation_audio": int(CONFIG.get("conservation_audio") or 0),
     }
 
 
@@ -1056,6 +1149,10 @@ def sauver_reglages(donnees):
         if change or premier:
             sauver_config(CONFIG)
             preparer_modele_en_fond()   # télécharge tout de suite, pas au prochain appel
+    if donnees.get("conservation_audio") in (0, 7, 30, 90):
+        CONFIG["conservation_audio"] = donnees["conservation_audio"]
+        sauver_config(CONFIG)
+        threading.Thread(target=nettoyer_audios, daemon=True).start()
     if isinstance(donnees.get("maj_auto"), bool):
         CONFIG["maj_auto"] = donnees["maj_auto"]
     if isinstance(donnees.get("son_systeme"), bool):
@@ -1140,6 +1237,10 @@ class Api(http.server.BaseHTTPRequestHandler):
             if self.path == "/api/projets/synthese":
                 lancer_synthese(d.get("nom", ""))
                 return self._json(200, {"ok": True})
+            if self.path == "/api/supprimer":
+                if d.get("quoi") == "audio":
+                    return self._json(200, supprimer_audio(d.get("projet", ""), d.get("fichier", "")))
+                return self._json(200, supprimer_compte_rendu(d.get("projet", ""), d.get("fichier", "")))
             if self.path == "/api/deplacer":
                 return self._json(200, deplacer_compte_rendu(d.get("projet", ""), d.get("fichier", ""), d.get("vers", "")))
             if self.path == "/api/projets/modifier":
@@ -1258,6 +1359,7 @@ class App(rumps.App):
 
         threading.Thread(target=self.travailleur, daemon=True).start()
         threading.Thread(target=self.boucle_maj, daemon=True).start()
+        threading.Thread(target=self.boucle_nettoyage, daemon=True).start()
         # Code téléchargé lancé avec succès : le démarreur ne le comptera pas comme raté
         if DOSSIER_CODE != CODE_APP:
             threading.Timer(10, lambda: (DOSSIER_CODE / ".essais").unlink(missing_ok=True)).start()
@@ -1324,6 +1426,15 @@ class App(rumps.App):
                     notifier("Mise à jour disponible", f"MiroRecap {v} est sortie. 🎙 → Mettre à jour")
             self.maj = v
         return self.maj
+
+    def boucle_nettoyage(self):
+        time.sleep(60)
+        while True:
+            try:
+                nettoyer_audios()
+            except Exception as e:
+                print(f"Conservation des audios : {e}", flush=True)
+            time.sleep(6 * 3600)
 
     def occupee(self):
         return self.enreg.actif or bool(self.statut) or not self.file_traitement.empty()

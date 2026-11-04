@@ -263,6 +263,8 @@
   dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
   dialog .supprimer-info { color: var(--second); font-size: 11px; }
   #feuille-modele { width: 460px; }
+  .bouton.danger { color: var(--rouge, #FF453A); }
+  .bouton.danger.confirmer { background: var(--rouge, #FF453A); color: #fff; }
   #fm-choix .rang { cursor: default; }
   #fm-choix .d { white-space: normal; overflow: visible; text-overflow: clip; }
   #fm-choix .taille { color: var(--second); font-weight: 400; font-size: 11px; margin-left: 6px; }
@@ -548,6 +550,10 @@
           </form>
         </div>
         <p class="note">Un changement de dossier prend effet au prochain lancement de MiroRecap.</p>
+
+        <p class="titre-groupe">Garder les audios</p>
+        <div id="conservation" class="groupe" role="radiogroup" aria-label="Durée de conservation des audios"></div>
+        <p class="note">Passé ce délai, les fichiers audio partent à la Corbeille du Mac. Les comptes rendus et leurs transcriptions sont toujours gardés. Tu peux aussi supprimer un audio à la main depuis un compte rendu.</p>
 
         <p class="titre-groupe">Erreurs</p>
         <div class="groupe">
@@ -890,7 +896,7 @@
     selection = c;
     rendreListe();
     const params = new URLSearchParams({ projet: c.projet, fichier: c.fichier });
-    const { markdown: texte } = await api("/api/compte-rendu?" + params);
+    const { markdown: texte, audio: aAudio } = await api("/api/compte-rendu?" + params);
     $("#lecteur").innerHTML = `
       <header class="lecteur-tete">
         <h1>${esc(c.titre)}</h1>
@@ -904,6 +910,8 @@
           <button class="bouton principal" id="copier-claude">Copier pour Claude</button>
           <button class="bouton" id="copier">Copier le compte rendu</button>
           <button class="bouton" id="finder">Afficher dans le Finder</button>
+          ${aAudio ? '<button class="bouton danger" id="suppr-audio">Supprimer l\'audio</button>' : ""}
+          <button class="bouton danger" id="suppr-cr">Supprimer</button>
         </div>
       </header>
       <div class="md">${markdown(texte)}</div>`;
@@ -926,6 +934,30 @@
         if (nouveau) ouvrirCompteRendu(nouveau);
       } catch (err) { message(err.message); }
     };
+    // Suppression en deux clics (le bouton demande confirmation), vers la Corbeille du Mac
+    const confirmerPuis = (bouton, libelle, action) => {
+      bouton.onclick = async () => {
+        if (!bouton.classList.contains("confirmer")) {
+          const initial = bouton.textContent;
+          bouton.classList.add("confirmer");
+          bouton.textContent = libelle;
+          setTimeout(() => { bouton.classList.remove("confirmer"); bouton.textContent = initial; }, 4000);
+          return;
+        }
+        try { await action(); } catch (err) { message(err.message); }
+      };
+    };
+    if ($("#suppr-audio")) confirmerPuis($("#suppr-audio"), "Confirmer : supprimer l'audio", async () => {
+      await api("/api/supprimer", { quoi: "audio", projet: c.projet, fichier: c.fichier });
+      message("Audio mis à la corbeille. Le compte rendu est gardé.");
+      ouvrirCompteRendu(c);
+    });
+    confirmerPuis($("#suppr-cr"), "Confirmer la suppression", async () => {
+      await api("/api/supprimer", { quoi: "tout", projet: c.projet, fichier: c.fichier });
+      message("Compte rendu et audio mis à la corbeille.");
+      selection = null;
+      chargerRaccourcis(); chargerComptesRendus();
+    });
     $("#copier").onclick = async () => {
       const sansTranscription = texte.split(/\n---\n/)[0].replace(/\n## Contexte pour Claude[\s\S]*$/, "");
       try { await navigator.clipboard.writeText(sansTranscription); message("Compte rendu copié."); }
@@ -1077,6 +1109,14 @@
         <div class="corps"><div>${esc(m.nom)}</div><div class="d">${esc(m.detail)} · ${esc(m.taille || "")}</div></div>
         <span class="coche">${icone("i-coche", 15)}</span>
       </div>`).join("");
+    const durees = [
+      { j: 7, nom: "7 jours" }, { j: 30, nom: "30 jours" }, { j: 90, nom: "3 mois" }, { j: 0, nom: "Toujours" },
+    ];
+    $("#conservation").innerHTML = durees.map((d) => `
+      <div class="rang cliquable" role="radio" tabindex="0" data-jours="${d.j}" aria-checked="${d.j === r.conservation_audio}">
+        <div class="corps"><div>${d.nom}</div></div>
+        <span class="coche">${icone("i-coche", 15)}</span>
+      </div>`).join("");
     $("#son-systeme").setAttribute("aria-checked", r.son_systeme);
     $("#maj-auto").setAttribute("aria-checked", r.maj_auto);
     if (!r.son_systeme) $("#son-systeme-etat").textContent = "Désactivé · seul ton micro est enregistré";
@@ -1184,6 +1224,19 @@
   $("#maj-bouton").addEventListener("click", async () => {
     try { await api("/api/maj", {}); message("Téléchargement de la mise à jour…"); sonder(); }
     catch (err) { message(err.message); }
+  });
+
+  async function choisirConservation(r) {
+    try {
+      await api("/api/reglages", { conservation_audio: +r.dataset.jours });
+      document.querySelectorAll("[data-jours]").forEach((x) => x.setAttribute("aria-checked", x === r));
+      message(+r.dataset.jours ? `Les audios de plus de ${r.querySelector(".corps div").textContent} iront à la Corbeille.` : "Les audios sont gardés pour toujours.");
+    } catch (err) { message(err.message); }
+  }
+  $("#conservation").addEventListener("click", (ev) => { const r = ev.target.closest("[data-jours]"); if (r) choisirConservation(r); });
+  $("#conservation").addEventListener("keydown", (ev) => {
+    const r = ev.target.closest("[data-jours]");
+    if (r && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); choisirConservation(r); }
   });
 
   async function basculerMajAuto() {
