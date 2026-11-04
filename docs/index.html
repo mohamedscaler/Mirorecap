@@ -22,398 +22,322 @@
 <meta name="theme-color" content="#ffffff">
 <link rel="icon" href="img/icone.png">
 <style>
-  /* ============ Jetons (langage visuel de macOS, comme l'app) ============ */
   :root {
-    --fond: #ffffff;
-    --fond-alt: #f5f5f7;
-    --encre: #1d1d1f;
-    --second: #6e6e73;
-    --trait: #d2d2d7;
-    --bleu: #0071e3;          /* réservé aux actions (télécharger, liens) */
-    --bleu-survol: #0077ed;
-    --rouge: #ff3b30;         /* réservé au logo et à l'enregistrement */
-    --police: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
-    --largeur: 1080px;
-    --marge: 22px;
-    --courbe: cubic-bezier(.25, .8, .25, 1);
+    --fond: #ffffff; --fond-alt: #f5f5f7; --encre: #1d1d1f; --second: #6e6e73; --tertiaire: #86868b;
+    --trait: rgba(0,0,0,.08); --carte: #f5f5f7; --bleu: #0071e3; --bleu-survol: #0077ed; --rouge: #ff3b30;
+    --verre: rgba(255,255,255,.72); --verre-bord: rgba(0,0,0,.06);
+    --ombre-app: 0 30px 80px rgba(24,32,60,.18), 0 8px 24px rgba(24,32,60,.08);
+    --courbe: cubic-bezier(.22,.8,.24,1);
+    --titre: -apple-system, "SF Pro Display", BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif;
+    --texte: -apple-system, "SF Pro Text", BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --fond: #000; --fond-alt: #0f0f11; --encre: #f5f5f7; --second: #a1a1a6; --tertiaire: #86868b;
+      --trait: rgba(255,255,255,.1); --carte: #161618; --bleu: #2997ff; --bleu-survol: #47a6ff;
+      --verre: rgba(22,22,24,.72); --verre-bord: rgba(255,255,255,.08); --ombre-app: 0 30px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06); }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html { scroll-behavior: smooth; }
-  body {
-    font: 400 17px/1.47 var(--police); letter-spacing: -0.022em;
-    color: var(--encre); background: var(--fond);
-    -webkit-font-smoothing: antialiased; overflow-x: clip;
-  }
+  html { scroll-behavior: smooth; background: var(--fond); }
+  body { font: 17px/1.5 var(--texte); color: var(--encre); background: var(--fond); -webkit-font-smoothing: antialiased; letter-spacing: -0.01em; }
+  img { display: block; max-width: 100%; height: auto; }
   a { color: var(--bleu); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  img { display: block; max-width: 100%; height: auto; }
-  :focus-visible { outline: 3px solid rgba(0, 113, 227, .45); outline-offset: 2px; border-radius: 6px; }
-  h1, h2, h3 { text-wrap: balance; font-weight: 700; }
-  p { text-wrap: pretty; }
-  .conteneur { max-width: var(--largeur); margin: 0 auto; padding: 0 var(--marge); }
-  .second { color: var(--second); }
+  svg { flex-shrink: 0; }
+  .large { max-width: 1120px; margin: 0 auto; padding: 0 22px; }
+  .etroit { max-width: 760px; margin: 0 auto; padding: 0 22px; }
 
-  /* Bouton principal façon Apple : pilule bleue */
-  .bouton {
-    display: inline-flex; align-items: center; gap: 8px;
-    background: var(--bleu); color: #fff;
-    font-size: 17px; font-weight: 500; letter-spacing: -0.01em;
-    padding: 12px 22px; border-radius: 980px;
-    transition: background-color 160ms, transform 160ms var(--courbe);
+  /* Navigation en verre */
+  .nav { position: sticky; top: 0; z-index: 50; padding: 10px 16px; }
+  .nav .capsule {
+    max-width: 980px; margin: 0 auto; height: 52px; padding: 0 8px 0 16px;
+    display: flex; align-items: center; gap: 22px; border-radius: 999px;
+    background: var(--verre); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+    box-shadow: inset 0 0 0 1px var(--verre-bord), 0 6px 24px rgba(0,0,0,.06);
   }
+  .marque { display: flex; align-items: center; gap: 9px; font: 600 17px var(--titre); color: var(--encre); letter-spacing: -0.02em; }
+  .marque:hover { text-decoration: none; }
+  .marque img { width: 28px; height: 28px; }
+  .nav .liens { display: flex; gap: 22px; margin-left: auto; font-size: 14px; }
+  .nav .liens a { color: var(--second); }
+  .nav .liens a:hover { color: var(--encre); text-decoration: none; }
+
+  /* Boutons */
+  .bouton { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 22px; border-radius: 999px; background: var(--bleu); color: #fff; font: 500 17px var(--texte); transition: background .2s, transform .2s var(--courbe); }
   .bouton:hover { background: var(--bleu-survol); text-decoration: none; }
   .bouton:active { transform: scale(.97); }
-  .bouton svg { width: 16px; height: 16px; }
+  .bouton.petit { height: 36px; padding: 0 16px; font-size: 14px; }
+  .bouton svg { width: 18px; height: 18px; }
+  .lien-fleche { font-size: 17px; }
   .lien-fleche::after { content: " ›"; }
 
-  /* ============ Navigation ============ */
-  .nav {
-    position: sticky; top: 0; z-index: 20;
-    background: rgba(255, 255, 255, .8);
-    -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
-    border-bottom: 1px solid rgba(0, 0, 0, .08);
-  }
-  .nav .conteneur { display: flex; align-items: center; justify-content: space-between; height: 52px; }
-  .marque { display: flex; align-items: center; gap: 8px; color: var(--encre); font-weight: 600; font-size: 17px; }
-  .marque:hover { text-decoration: none; }
-  .marque img { width: 24px; height: 24px; }
-  .nav-liens { display: flex; align-items: center; gap: 26px; font-size: 13px; }
-  .nav-liens a:not(.bouton) { color: var(--encre); opacity: .8; }
-  .nav-liens a:not(.bouton):hover { opacity: 1; text-decoration: none; }
-  .nav .bouton { font-size: 13px; padding: 5px 12px; }
+  /* Hero */
+  .hero { text-align: center; padding: 72px 0 0; position: relative; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; inset: -20% -10% auto; height: 760px; z-index: -1;
+    background: radial-gradient(40% 50% at 30% 40%, rgba(255,59,48,.10), transparent 70%), radial-gradient(40% 50% at 72% 45%, rgba(0,113,227,.10), transparent 70%); }
+  .hero .icone-app { width: 96px; height: 96px; margin: 0 auto 26px; filter: drop-shadow(0 12px 24px rgba(255,59,48,.25)); }
+  h1 { font: 700 clamp(44px, 7vw, 80px)/1.04 var(--titre); letter-spacing: -0.035em; text-wrap: balance; }
+  .chapo { font-size: clamp(19px, 2.2vw, 23px); line-height: 1.4; color: var(--second); max-width: 620px; margin: 20px auto 0; text-wrap: pretty; }
+  .actions { display: flex; gap: 24px; justify-content: center; align-items: center; margin-top: 30px; flex-wrap: wrap; }
+  .meta { margin-top: 16px; font-size: 13px; color: var(--tertiaire); }
+  .ecran { margin: 56px auto 0; max-width: 1080px; padding: 0 22px; }
+  .ecran img { border-radius: 14px; box-shadow: var(--ombre-app); width: 100%; }
+  .compat { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 28px; margin: 48px auto 0; font-size: 14px; color: var(--tertiaire); }
+  .compat b { color: var(--second); font-weight: 600; }
 
-  /* ============ Héros ============ */
-  .heros { text-align: center; padding: 72px 0 0; }
-  .heros .icone { width: 96px; height: 96px; margin: 0 auto 18px; }
-  .heros h1 { font-size: clamp(40px, 6.2vw, 72px); line-height: 1.05; letter-spacing: -0.035em; max-width: 14ch; margin: 0 auto; }
-  .heros .chapo { font-size: clamp(19px, 1.9vw, 24px); line-height: 1.4; color: var(--second); max-width: 34ch; margin: 18px auto 0; letter-spacing: -0.015em; }
-  .heros .actions { display: flex; align-items: center; justify-content: center; gap: 26px; margin-top: 30px; flex-wrap: wrap; font-size: 17px; }
-  .heros .infos { margin-top: 14px; font-size: 13px; color: var(--second); }
+  /* Sections */
+  section { padding: 120px 0; }
+  .alt { background: var(--fond-alt); }
+  .surtitre { font-size: 14px; font-weight: 600; color: var(--rouge); letter-spacing: 0; margin-bottom: 10px; }
+  h2 { font: 700 clamp(34px, 5vw, 56px)/1.07 var(--titre); letter-spacing: -0.03em; text-wrap: balance; }
+  .intro { font-size: 21px; color: var(--second); margin-top: 16px; max-width: 640px; text-wrap: pretty; }
+  .centre { text-align: center; }
+  .centre .intro { margin-left: auto; margin-right: auto; }
 
-  /* Scène : fenêtre macOS + menu de la barre des menus */
-  .scene { position: relative; max-width: 1000px; margin: 64px auto 0; padding: 0 var(--marge); }
-  .fenetre {
-    border-radius: 12px; overflow: hidden; background: #fff;
-    box-shadow: 0 30px 80px rgba(0, 0, 0, .18), 0 0 0 1px rgba(0, 0, 0, .1);
-  }
-  .fenetre-barre {
-    height: 32px; background: #ececec; border-bottom: 1px solid #d9d9d9;
-    display: flex; align-items: center; padding: 0 12px; gap: 8px; position: relative;
-  }
-  .fenetre-barre i { width: 12px; height: 12px; border-radius: 50%; display: block; }
-  .fenetre-barre i:nth-child(1) { background: #ff5f57; } .fenetre-barre i:nth-child(2) { background: #febc2e; } .fenetre-barre i:nth-child(3) { background: #28c840; }
-  .fenetre-barre span { position: absolute; left: 0; right: 0; text-align: center; font-size: 13px; font-weight: 600; color: #4d4d4d; pointer-events: none; }
+  /* Étapes */
+  .etapes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; margin-top: 56px; counter-reset: etape; }
+  .etape { counter-increment: etape; }
+  .etape::before { content: counter(etape); display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--encre); color: var(--fond); font: 600 15px var(--titre); margin-bottom: 16px; }
+  .etape h3 { font: 600 19px/1.3 var(--titre); letter-spacing: -0.015em; }
+  .etape p { color: var(--second); font-size: 16px; margin-top: 6px; }
 
-  .menu-barre {
-    position: absolute; top: -34px; right: calc(var(--marge) + 40px); width: 290px; z-index: 2;
-    font-size: 13px; letter-spacing: -0.01em;
-  }
-  .menu-barre-haut {
-    display: flex; justify-content: flex-end; align-items: center; gap: 14px;
-    height: 26px; padding: 0 10px; color: var(--encre);
-  }
-  .menu-barre-haut .actif { background: rgba(0, 0, 0, .1); border-radius: 5px; padding: 2px 6px; display: flex; align-items: center; gap: 5px; }
-  .onde { display: inline-flex; gap: 2px; align-items: center; height: 12px; }
-  .onde b { width: 2px; border-radius: 1px; background: currentColor; height: 5px; }
-  .onde b:nth-child(2) { height: 10px; } .onde b:nth-child(3) { height: 12px; } .onde b:nth-child(4) { height: 8px; }
-  .menu {
-    margin-top: 4px; background: rgba(246, 246, 246, .94);
-    -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px);
-    border-radius: 10px; padding: 5px;
-    box-shadow: 0 12px 34px rgba(0, 0, 0, .2), 0 0 0 1px rgba(0, 0, 0, .1);
-  }
-  .menu div { padding: 4px 10px; border-radius: 5px; color: #1d1d1f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .menu .choisi { background: var(--bleu); color: #fff; display: flex; align-items: center; gap: 8px; }
-  .menu .point { width: 8px; height: 8px; border-radius: 50%; background: var(--rouge); box-shadow: 0 0 0 2px #fff; animation: pulse 1.4s ease-in-out infinite; }
-  @keyframes pulse { 50% { opacity: .35; } }
-  .menu hr { border: 0; height: 1px; background: rgba(0, 0, 0, .1); margin: 5px 10px; }
-  .menu .gris { color: #8a8a8e; }
+  /* Grille de fonctionnalités */
+  .grille { display: grid; grid-template-columns: repeat(6, 1fr); gap: 20px; margin-top: 56px; }
+  .tuile { background: var(--fond); border-radius: 28px; padding: 32px 32px 0; overflow: hidden; display: flex; flex-direction: column; box-shadow: inset 0 0 0 1px var(--trait); }
+  .alt .tuile { background: var(--fond); }
+  .tuile.g4 { grid-column: span 4; } .tuile.g3 { grid-column: span 3; } .tuile.g2 { grid-column: span 2; }
+  .tuile h3 { font: 700 26px/1.15 var(--titre); letter-spacing: -0.025em; text-wrap: balance; }
+  .tuile p { color: var(--second); font-size: 16px; margin-top: 10px; max-width: 460px; }
+  .tuile .visuel { margin-top: auto; padding-top: 28px; }
+  .tuile .visuel img { border-radius: 14px 14px 0 0; box-shadow: 0 -1px 0 var(--trait), 0 10px 40px rgba(0,0,0,.08); }
+  .tuile.texte { padding-bottom: 32px; }
+  /* Visuels dessinés en HTML */
+  .bulle { border-radius: 18px; padding: 10px 14px; font-size: 14px; line-height: 1.4; max-width: 88%; margin-top: 8px; }
+  .bulle.moi { margin-left: auto; background: var(--bleu); color: #fff; border-bottom-right-radius: 6px; }
+  .bulle.claude { background: var(--carte); border-bottom-left-radius: 6px; }
+  .avant-apres { margin-top: 22px; font-size: 15px; display: grid; gap: 10px; }
+  .avant-apres div { display: flex; gap: 10px; align-items: baseline; }
+  .avant-apres s { color: var(--tertiaire); }
+  .avant-apres b { color: #1a9e45; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { .avant-apres b { color: #32d74b; } }
+  .coches { list-style: none; margin-top: 22px; display: grid; gap: 10px; font-size: 15px; }
+  .coches li { display: flex; gap: 10px; align-items: center; }
+  .coches li::before { content: ""; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--tertiaire); flex-shrink: 0; }
 
-  /* ============ Sections ============ */
-  .section { padding: 120px 0; }
-  .section.alt { background: var(--fond-alt); }
-  .titre-section { font-size: clamp(32px, 4.4vw, 48px); line-height: 1.08; letter-spacing: -0.03em; }
-  .intro { font-size: 21px; line-height: 1.4; color: var(--second); max-width: 38ch; margin-top: 14px; letter-spacing: -0.015em; }
-  .centre { text-align: center; } .centre .intro { margin-left: auto; margin-right: auto; }
-
-  /* Étapes : quatre colonnes, sans cartes */
-  .etapes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 40px; margin-top: 64px; text-align: left; }
-  .etape svg { width: 30px; height: 30px; color: var(--encre); margin-bottom: 16px; }
-  .etape svg.rouge { color: var(--rouge); }
-  .etape h3 { font-size: 19px; letter-spacing: -0.02em; margin-bottom: 6px; }
-  .etape p { font-size: 15px; color: var(--second); line-height: 1.5; }
-
-  /* Fonctionnalités : texte + capture, en alternance */
-  .fonction { display: grid; grid-template-columns: 5fr 7fr; gap: 64px; align-items: center; }
-  .fonction + .fonction { margin-top: 140px; }
-  .fonction.inverse { grid-template-columns: 7fr 5fr; }
-  .fonction.inverse .texte { order: 2; }
-  .fonction h3 { font-size: clamp(28px, 3.4vw, 40px); line-height: 1.1; letter-spacing: -0.03em; }
-  .fonction p { margin-top: 14px; color: var(--second); font-size: 19px; line-height: 1.45; }
-  .fonction ul { list-style: none; margin-top: 20px; display: grid; gap: 10px; font-size: 17px; }
-  .fonction li { display: flex; gap: 10px; align-items: baseline; }
-  .fonction li::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--encre); flex-shrink: 0; transform: translateY(-2px); }
-  .capture { border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, .12), 0 0 0 1px rgba(0, 0, 0, .08); }
-
-  /* Bandeau confidentialité */
-  .confidentialite { text-align: center; }
-  .confidentialite .grand { font-size: clamp(36px, 5.4vw, 64px); line-height: 1.05; letter-spacing: -0.035em; max-width: 16ch; margin: 0 auto; }
-  .colonnes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; margin-top: 64px; text-align: left; }
-  .colonnes h3 { font-size: 19px; margin-bottom: 6px; letter-spacing: -0.02em; }
-  .colonnes p { font-size: 15px; color: var(--second); }
+  /* Confidentialité */
+  .sombre { background: #000; color: #f5f5f7; }
+  .sombre .intro, .sombre p { color: #a1a1a6; }
+  .trois { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; margin-top: 56px; }
+  .trois h3 { font: 600 21px/1.3 var(--titre); letter-spacing: -0.015em; color: #f5f5f7; margin-top: 14px; }
+  .trois p { font-size: 16px; margin-top: 8px; }
+  .trois svg { width: 30px; height: 30px; color: #f5f5f7; }
 
   /* Installation */
   .installer { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: start; }
-  .installer ol { list-style: none; counter-reset: n; display: grid; gap: 22px; margin-top: 8px; }
-  .installer li { counter-increment: n; display: grid; grid-template-columns: 36px 1fr; gap: 14px; font-size: 17px; }
-  .installer li::before {
-    content: counter(n); width: 30px; height: 30px; border-radius: 50%;
-    background: var(--encre); color: #fff; font-size: 14px; font-weight: 600;
-    display: grid; place-items: center;
-  }
-  .installer li span { color: var(--second); display: block; font-size: 15px; margin-top: 2px; }
-  .telecharger { margin-top: 32px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-  .telecharger small { font-size: 13px; color: var(--second); }
+  .liste-install { list-style: none; counter-reset: i; display: grid; gap: 22px; }
+  .liste-install li { counter-increment: i; display: grid; grid-template-columns: 36px 1fr; gap: 14px; font-weight: 600; font-size: 19px; }
+  .liste-install li::before { content: counter(i); width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--carte); box-shadow: inset 0 0 0 1px var(--trait); font: 600 15px var(--titre); }
+  .liste-install span { display: block; font-weight: 400; font-size: 15px; color: var(--second); margin-top: 4px; }
 
   /* FAQ */
-  .faq { max-width: 760px; margin: 48px auto 0; }
+  .faq { margin-top: 48px; }
   .faq details { border-bottom: 1px solid var(--trait); }
-  .faq summary {
-    list-style: none; cursor: pointer; padding: 22px 0; font-size: 19px; font-weight: 600; letter-spacing: -0.02em;
-    display: flex; justify-content: space-between; align-items: center; gap: 20px;
-  }
+  .faq summary { list-style: none; cursor: pointer; padding: 22px 0; font: 600 19px/1.35 var(--titre); letter-spacing: -0.015em; display: flex; justify-content: space-between; gap: 20px; }
   .faq summary::-webkit-details-marker { display: none; }
-  .faq summary::after { content: "+"; font-size: 26px; font-weight: 300; color: var(--second); transition: transform 220ms var(--courbe); }
+  .faq summary::after { content: "+"; font-weight: 300; font-size: 26px; line-height: 1; color: var(--tertiaire); transition: transform .25s var(--courbe); }
   .faq details[open] summary::after { transform: rotate(45deg); }
-  .faq .reponse { padding: 0 40px 24px 0; color: var(--second); font-size: 17px; }
+  .faq p { padding: 0 40px 22px 0; color: var(--second); font-size: 16px; }
 
-  /* Pied de page */
-  .pied { background: var(--fond-alt); border-top: 1px solid var(--trait); padding: 28px 0 40px; font-size: 12px; color: var(--second); }
-  .pied .conteneur { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-  .pied nav { display: flex; gap: 20px; }
+  footer { border-top: 1px solid var(--trait); padding: 28px 0 40px; font-size: 13px; color: var(--tertiaire); }
+  footer .large { display: flex; gap: 16px 28px; flex-wrap: wrap; justify-content: space-between; }
+  footer .liens { display: flex; gap: 22px; }
 
-  /* Apparitions douces au défilement */
-  .apparait { opacity: 0; transform: translateY(24px); transition: opacity 800ms var(--courbe), transform 800ms var(--courbe); }
-  .apparait.vu { opacity: 1; transform: none; }
-  .sans-js .apparait { opacity: 1; transform: none; }
-  @media (prefers-reduced-motion: reduce) {
-    html { scroll-behavior: auto; }
-    .apparait { opacity: 1; transform: none; transition: none; }
-    .menu .point { animation: none; }
-  }
+  /* Apparition au défilement (seulement si JavaScript est actif) */
+  .js .apparait { opacity: 0; transform: translateY(24px); transition: opacity .8s var(--courbe), transform .8s var(--courbe); }
+  .js .apparait.visible { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .js .apparait { opacity: 1; transform: none; transition: none; } html { scroll-behavior: auto; } }
 
-  /* ============ Petits écrans ============ */
   @media (max-width: 900px) {
     .etapes { grid-template-columns: 1fr 1fr; }
-    .fonction, .fonction.inverse { grid-template-columns: 1fr; gap: 32px; }
-    .fonction.inverse .texte { order: 0; }
-    .colonnes, .installer { grid-template-columns: 1fr; gap: 32px; }
-    .menu-barre { right: var(--marge); width: 250px; }
+    .grille { grid-template-columns: 1fr; }
+    .tuile.g4, .tuile.g3, .tuile.g2 { grid-column: auto; }
+    .trois, .installer { grid-template-columns: 1fr; gap: 36px; }
+    section { padding: 88px 0; }
   }
   @media (max-width: 600px) {
-    .nav-liens a:not(.bouton) { display: none; }
-    .heros { padding-top: 48px; }
-    .heros .icone { width: 76px; height: 76px; }
-    .scene { margin-top: 84px; }
-    .menu-barre { width: 220px; top: -44px; font-size: 12px; }
-    .menu div:nth-child(n+5) { display: none; }
-    .fenetre-barre { height: 24px; } .fenetre-barre i { width: 9px; height: 9px; } .fenetre-barre span { font-size: 11px; }
-    .section { padding: 84px 0; }
-    .etapes { grid-template-columns: 1fr; gap: 28px; }
-    .faq .reponse { padding-right: 0; }
+    .nav .liens a:not(.bouton) { display: none; }
+    .etapes { grid-template-columns: 1fr; }
+    .tuile { padding: 26px 22px 0; border-radius: 22px; }
+    .tuile.texte { padding-bottom: 26px; }
+    .faq p { padding-right: 0; }
   }
 </style>
 </head>
-<body class="sans-js">
-
-<!-- Icônes -->
+<body>
+<script>document.documentElement.classList.add("js")</script>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="i-micro" viewBox="0 0 24 24"><rect x="8.5" y="2.5" width="7" height="12" rx="3.5" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
-  <symbol id="i-texte" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h11M4 18h7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
-  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 2.8h8l4.2 4.2v14.2H6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12h6M9 15.5h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
-  <symbol id="i-dossier" viewBox="0 0 24 24"><path d="M2.5 6.2c0-1 .8-1.7 1.7-1.7h5l2 2.2h8.6c1 0 1.7.8 1.7 1.7v9.4c0 1-.8 1.7-1.7 1.7H4.2c-1 0-1.7-.8-1.7-1.7z" fill="currentColor"/></symbol>
-  <symbol id="i-cadenas" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10.5" rx="2.5" fill="currentColor"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
-  <symbol id="i-telecharger" viewBox="0 0 16 16"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-telecharger" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14"/></symbol>
+  <symbol id="i-puce" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></symbol>
+  <symbol id="i-nuage" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M7 18h10.5a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.6 9.1 4.5 4.5 0 0 0 7 18z"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></symbol>
 </svg>
 
 <header class="nav">
-  <div class="conteneur">
-    <a class="marque" href="#haut"><img src="img/icone.png" alt="">MiroRecap</a>
-    <nav class="nav-liens" aria-label="Navigation">
-      <a href="#fonctionnement">Fonctionnement</a>
-      <a href="#installer">Installer</a>
+  <div class="capsule">
+    <a class="marque" href="#"><img src="img/icone.png" alt="">MiroRecap</a>
+    <nav class="liens" aria-label="Sections">
+      <a href="#fonctionnalites">Fonctionnalités</a>
+      <a href="#confidentialite">Confidentialité</a>
       <a href="#questions">Questions</a>
-      <a class="bouton" href="https://github.com/mohamedscaler/Mirorecap/releases/latest/download/MiroRecap.dmg">Télécharger</a>
     </nav>
+    <a class="bouton petit" href="https://github.com/mohamedscaler/Mirorecap/releases/latest/download/MiroRecap.dmg">Télécharger</a>
   </div>
 </header>
 
-<main id="haut">
-  <!-- ============ Héros ============ -->
-  <section class="heros">
-    <div class="conteneur">
-      <img class="icone apparait" src="img/icone.png" alt="Icône de MiroRecap" width="96" height="96">
-      <h1 class="apparait">Tes appels, résumés et rangés.</h1>
-      <p class="chapo apparait">MiroRecap enregistre tes appels et tes rendez-vous sur ton Mac. Claude en tire un compte rendu clair, rangé dans le bon projet.</p>
-      <div class="actions apparait">
+<main>
+  <div class="hero">
+    <div class="large">
+      <img class="icone-app" src="img/icone.png" alt="Icône de MiroRecap">
+      <h1>Tes appels,<br>résumés et rangés.</h1>
+      <p class="chapo">MiroRecap enregistre tes appels sur ton Mac, les transcrit sans rien envoyer, et rédige un compte rendu clair, rangé par client, avec le mail de suivi prêt à partir.</p>
+      <div class="actions">
         <a class="bouton" href="https://github.com/mohamedscaler/Mirorecap/releases/latest/download/MiroRecap.dmg"><svg><use href="#i-telecharger"/></svg>Télécharger pour Mac</a>
-        <a class="lien-fleche" href="#fonctionnement">Voir comment ça marche</a>
+        <a class="lien-fleche" href="#comment">Voir comment ça marche</a>
       </div>
-      <p class="infos apparait">Gratuit · Mac avec puce Apple · macOS 13.5 ou plus récent</p>
+      <p class="meta">Gratuit · Mac avec puce Apple · macOS 13.5 ou plus récent</p>
     </div>
-
-    <div class="scene apparait">
-      <!-- Le menu de MiroRecap dans la barre des menus du Mac -->
-      <div class="menu-barre" aria-hidden="true">
-        <div class="menu-barre-haut">
-          <span>Wi‑Fi</span>
-          <span class="actif"><span class="onde"><b></b><b></b><b></b><b></b><b></b></span> 12:48</span>
-          <span>Mer. 14:32</span>
-        </div>
-        <div class="menu">
-          <div class="choisi"><span class="point"></span>Arrêter et analyser</div>
-          <div>Ouvrir MiroRecap</div>
-          <hr>
-          <div>Ouvrir les comptes rendus dans le Finder</div>
-          <div>Ouvrir le dossier d'import</div>
-          <hr>
-          <div class="gris">Dernier : Boulangerie Martin / Devis site</div>
-        </div>
-      </div>
-
-      <div class="fenetre">
-        <div class="fenetre-barre"><i></i><i></i><i></i><span>MiroRecap</span></div>
-        <img src="img/app-comptes-rendus.jpg" alt="Fenêtre de MiroRecap en Liquid Glass : la liste des comptes rendus classés par jour et un compte rendu ouvert, avec contexte, points clés et décisions" width="2360" height="1480">
-      </div>
+    <div class="ecran apparait">
+      <picture>
+        <source srcset="img/app-sombre.jpg" media="(prefers-color-scheme: dark)">
+        <img src="img/app-clair.jpg" width="2360" height="1480" alt="La fenêtre de MiroRecap : la liste des comptes rendus et un compte rendu ouvert avec ses actions et le mail préparé">
+      </picture>
     </div>
-  </section>
+    <p class="compat large"><b>Fonctionne avec</b> Google Meet · Zoom · Teams · FaceTime · WhatsApp · le Dictaphone de l'iPhone</p>
+  </div>
 
-  <!-- ============ Fonctionnement ============ -->
-  <section class="section alt" id="fonctionnement" style="margin-top:120px">
-    <div class="conteneur centre">
-      <h2 class="titre-section apparait">Tu parles. MiroRecap s'occupe du reste.</h2>
-      <p class="intro apparait">Plus besoin de prendre des notes pendant un appel. Tout se fait tout seul, pendant que tu passes à la suite.</p>
+  <section id="comment">
+    <div class="large">
+      <p class="surtitre apparait">Comment ça marche</p>
+      <h2 class="apparait">Tu parles. Le reste se fait tout seul.</h2>
       <div class="etapes">
-        <div class="etape apparait"><svg class="rouge"><use href="#i-micro"/></svg><h3>Tu enregistres</h3><p>D'un clic dans la barre des menus ou depuis l'app. En visio, ta voix et celle de tes interlocuteurs sont captées. Ou avec le Dictaphone de ton iPhone.</p></div>
-        <div class="etape apparait"><svg><use href="#i-texte"/></svg><h3>Ton Mac transcrit</h3><p>Whisper transforme l'audio en texte directement sur ton Mac, sans internet.</p></div>
-        <div class="etape apparait"><svg><use href="#i-doc"/></svg><h3>Claude résume</h3><p>Il rédige le compte rendu : décisions, actions, chiffres et mail de suivi.</p></div>
-        <div class="etape apparait"><svg style="color:var(--bleu)"><use href="#i-dossier"/></svg><h3>C'est rangé</h3><p>Le compte rendu arrive dans le bon projet, et une notification te prévient.</p></div>
+        <div class="etape apparait"><h3>Tu enregistres</h3><p>Un clic dans la barre des menus. En visio, MiroRecap repère l'appel et te propose de l'enregistrer.</p></div>
+        <div class="etape apparait"><h3>Ton Mac transcrit</h3><p>Whisper tourne sur la puce de ton Mac. Ta voix et celle de tes interlocuteurs, sans internet.</p></div>
+        <div class="etape apparait"><h3>L'IA rédige</h3><p>Claude ou ChatGPT tire les décisions, les actions, les chiffres et le mail à envoyer.</p></div>
+        <div class="etape apparait"><h3>C'est rangé</h3><p>Le compte rendu arrive dans le bon projet. Une notification te prévient.</p></div>
       </div>
     </div>
   </section>
 
-  <!-- ============ Fonctionnalités ============ -->
-  <section class="section">
-    <div class="conteneur">
-      <div class="fonction">
-        <div class="texte">
-          <h3 class="apparait">Un compte rendu prêt à envoyer.</h3>
-          <p class="apparait">Chaque appel donne un document clair, que tu peux relire en trente secondes. Un clic sur « Copier pour Claude » te donne un contexte compact à coller dans une conversation Claude.</p>
-          <ul class="apparait">
-            <li>Le contexte et les points clés</li>
-            <li>Les décisions prises</li>
-            <li>Qui fait quoi, et pour quand</li>
-            <li>Les budgets, prix et délais évoqués</li>
-            <li>Un mail de suivi déjà rédigé</li>
-            <li>Un bloc de contexte prêt pour Claude</li>
+  <section class="alt" id="fonctionnalites">
+    <div class="large">
+      <div class="centre">
+        <p class="surtitre apparait">Fonctionnalités</p>
+        <h2 class="apparait">Tout ce qu'il faut après un appel.</h2>
+        <p class="intro apparait">Pensé pour les indépendants et les petites équipes qui enchaînent les appels clients.</p>
+      </div>
+      <div class="grille">
+        <article class="tuile g4 apparait">
+          <h3>Il voit l'appel commencer.</h3>
+          <p>Quand Meet, Zoom ou Teams utilise ton micro, MiroRecap te propose d'enregistrer. Tu suis ensuite la transcription en direct.</p>
+          <div class="visuel"><img src="img/fonction-appel.jpg" alt="Bandeau « Appel en cours sur Meet · l'enregistrer ? » et transcription en cours à 62 %" loading="lazy"></div>
+        </article>
+        <article class="tuile g2 texte apparait">
+          <h3>Demande à Claude.</h3>
+          <p>Connecte MiroRecap à l'app Claude : il lit tes comptes rendus pour te répondre.</p>
+          <div style="margin-top:22px">
+            <p class="bulle moi">Qu'est-ce qu'on a dit avec la boulangerie Martin ?</p>
+            <p class="bulle claude">Devis site + commandes en ligne, 1&nbsp;800&nbsp;€ à confirmer. Tu dois envoyer le devis avant vendredi.</p>
+          </div>
+        </article>
+        <article class="tuile g3 apparait">
+          <h3>Le mail est déjà écrit.</h3>
+          <p>Devis, récap, relance : MiroRecap rédige le mail dans ton ton, avec ta signature. Un clic l'ouvre dans Mail.</p>
+          <div class="visuel"><img src="img/fonction-mail.jpg" alt="Carte « Mail à envoyer » avec destinataire, objet et bouton Ouvrir dans Mail" loading="lazy"></div>
+        </article>
+        <article class="tuile g3 apparait">
+          <h3>Ton abonnement Claude ou ChatGPT.</h3>
+          <p>Pas de clé à acheter : l'analyse passe par ton abonnement. Et si l'un ne répond pas, l'autre prend le relais.</p>
+          <div class="visuel"><img src="img/fonction-ia.jpg" alt="Réglages : abonnements Claude et ChatGPT" loading="lazy"></div>
+        </article>
+        <article class="tuile g3 texte apparait">
+          <h3>Les noms bien écrits.</h3>
+          <p>Ajoute tes clients et ton jargon : la transcription les reconnaît. Un raté ? « Améliorer » corrige après coup.</p>
+          <div class="avant-apres">
+            <div><s>web flo</s><span>→</span><b>Webflow</b></div>
+            <div><s>mille huit cent</s><span>→</span><b>1&nbsp;800&nbsp;€</b></div>
+            <div><s>client first</s><span>→</span><b>Client-First</b></div>
+          </div>
+        </article>
+        <article class="tuile g3 texte apparait">
+          <h3>Les actions dans Rappels.</h3>
+          <p>Les tâches de l'appel partent dans l'app Rappels, sur ton Mac et ton iPhone.</p>
+          <ul class="coches">
+            <li>Envoyer le devis avant vendredi</li>
+            <li>Demander les photos des gâteaux</li>
+            <li>Relancer Claire le 15/11</li>
           </ul>
-        </div>
-        <img class="capture apparait" src="img/app-comptes-rendus.jpg" alt="Compte rendu ouvert dans MiroRecap" width="2360" height="1480" loading="lazy">
-      </div>
-
-      <div class="fonction inverse">
-        <div class="texte">
-          <h3 class="apparait">Chaque projet, son point d'étape.</h3>
-          <p class="apparait">Claude range chaque appel dans le bon projet. Sur la page d'un projet, un clic sur « Où on en est ? » et Claude relit tous les appels pour faire le point : décisions, actions en cours, chiffres, prochaines étapes.</p>
-          <ul class="apparait">
-            <li>Toutes les actions à faire, regroupées</li>
-            <li>Un appel mal rangé ? Change-le de projet en un clic</li>
-          </ul>
-        </div>
-        <img class="capture apparait" src="img/app-projet.jpg" alt="Page d'un projet dans MiroRecap : point d'étape rédigé par Claude et actions à faire" width="2000" height="1280" loading="lazy">
-      </div>
-
-      <div class="fonction">
-        <div class="texte">
-          <h3 class="apparait">Ton abonnement Claude, en un clic.</h3>
-          <p class="apparait">Tu as Claude Pro ou Max ? Clique sur Se connecter, valide dans ton navigateur, et c'est tout : pas de clé API ni de frais en plus. Sans abonnement, une clé API fonctionne aussi.</p>
-        </div>
-        <img class="capture apparait" src="img/app-reglages.jpg" alt="Réglages de MiroRecap : connexion à l'abonnement Claude et choix de l'analyse" width="2000" height="1280" loading="lazy">
+        </article>
       </div>
     </div>
   </section>
 
-  <!-- ============ Confidentialité ============ -->
-  <section class="section alt confidentialite">
-    <div class="conteneur">
-      <svg width="40" height="40" style="margin:0 auto 20px;display:block;color:var(--encre)" aria-hidden="true"><use href="#i-cadenas"/></svg>
-      <h2 class="grand apparait">L'audio ne quitte pas ton Mac.</h2>
-      <div class="colonnes">
-        <div class="apparait"><h3>Transcription en local</h3><p>Whisper tourne sur la puce de ton Mac. Seul le texte part chez Claude pour rédiger le compte rendu.</p></div>
-        <div class="apparait"><h3>Tes fichiers chez toi</h3><p>Comptes rendus et enregistrements sont rangés dans ton iCloud Drive, consultables depuis l'app Fichiers de l'iPhone.</p></div>
-        <div class="apparait"><h3>Code ouvert</h3><p>Le code de MiroRecap est public : chacun peut vérifier ce que fait l'app.</p></div>
+  <section class="sombre" id="confidentialite">
+    <div class="large">
+      <h2 class="apparait">L'audio ne quitte pas ton Mac.</h2>
+      <p class="intro apparait">Pas de bot dans tes visios, pas de serveur à nous, rien à revendre.</p>
+      <div class="trois">
+        <div class="apparait"><svg><use href="#i-puce"/></svg><h3>Transcription en local</h3><p>Whisper tourne sur ta puce Apple. Seul le texte part chez Claude ou ChatGPT, via ton compte, pour rédiger.</p></div>
+        <div class="apparait"><svg><use href="#i-nuage"/></svg><h3>Tes fichiers chez toi</h3><p>Comptes rendus et audios sont dans ton iCloud Drive. Tu choisis combien de temps garder les enregistrements.</p></div>
+        <div class="apparait"><svg><use href="#i-code"/></svg><h3>Code ouvert</h3><p>Le code est public : chacun peut vérifier ce que fait l'app.</p></div>
       </div>
     </div>
   </section>
 
-  <!-- ============ Installer ============ -->
-  <section class="section" id="installer">
-    <div class="conteneur installer">
+  <section>
+    <div class="large installer">
       <div>
-        <h2 class="titre-section apparait">Installé en deux minutes.</h2>
-        <p class="intro apparait">Rien d'autre à installer : tout est inclus dans l'app.</p>
-        <div class="telecharger apparait">
+        <h2 class="apparait">Prêt en deux minutes.</h2>
+        <p class="intro apparait">Une fenêtre de bienvenue te guide : transcription, connexion à ton IA, test du micro.</p>
+        <div class="actions apparait" style="justify-content:flex-start">
           <a class="bouton" href="https://github.com/mohamedscaler/Mirorecap/releases/latest/download/MiroRecap.dmg"><svg><use href="#i-telecharger"/></svg>Télécharger pour Mac</a>
-          <small>MiroRecap.dmg · 221 Mo · gratuit</small>
         </div>
       </div>
-      <ol class="apparait">
-        <li><div>Ouvre MiroRecap.dmg<span>Le fichier est dans tes Téléchargements.</span></div></li>
-        <li><div>Glisse MiroRecap dans Applications</div></li>
-        <li><div>Ouvre l'app<span>La première fois, macOS demande une confirmation : Réglages Système → Confidentialité et sécurité → Ouvrir quand même.</span></div></li>
-        <li><div>Connecte ton compte Claude<span>Dans les Réglages de MiroRecap, clique sur Se connecter.</span></div></li>
+      <ol class="liste-install">
+        <li class="apparait"><div>Ouvre le fichier téléchargé<span>MiroRecap.dmg, dans ton dossier Téléchargements.</span></div></li>
+        <li class="apparait"><div>Glisse MiroRecap dans Applications<span>Puis lance-le depuis le Launchpad.</span></div></li>
+        <li class="apparait"><div>Confirme l'ouverture la première fois<span>Réglages Système → Confidentialité et sécurité → Ouvrir quand même. Ensuite, les mises à jour s'installent toutes seules.</span></div></li>
       </ol>
     </div>
   </section>
 
-  <!-- ============ Questions ============ -->
-  <section class="section alt" id="questions">
-    <div class="conteneur">
-      <h2 class="titre-section centre apparait">Questions fréquentes</h2>
+  <section class="alt" id="questions">
+    <div class="etroit">
+      <h2 class="centre apparait">Questions fréquentes</h2>
       <div class="faq">
-        <details class="apparait"><summary>Il me faut quel Mac ?</summary><p class="reponse">Un Mac avec puce Apple (M1, M2, M3, M4…) sous macOS 13.5 ou plus récent. Les Mac Intel ne sont pas compatibles, car la transcription utilise la puce Apple.</p></details>
-        <details class="apparait"><summary>C'est vraiment gratuit ?</summary><p class="reponse">L'app est gratuite. Pour les comptes rendus, il faut un abonnement Claude Pro ou Max (sans frais en plus), ou une clé API Anthropic facturée à l'usage.</p></details>
-        <details class="apparait"><summary>Pourquoi macOS bloque l'app la première fois ?</summary><p class="reponse">MiroRecap est une app indépendante, sans la signature payante d'Apple. macOS te demande donc de confirmer une seule fois, dans Réglages Système → Confidentialité et sécurité.</p></details>
-        <details class="apparait"><summary>Ça marche avec mon iPhone ?</summary><p class="reponse">Oui. Enregistre un appel ou un mémo, puis partage-le dans iCloud Drive → Comptes-rendus → _A-traiter. Ton Mac s'en charge dès qu'il est allumé.</p></details>
-        <details class="apparait"><summary>J'ai le droit d'enregistrer un appel ?</summary><p class="reponse">En France, enregistrer quelqu'un sans le prévenir est interdit. Préviens toujours ton interlocuteur avant de lancer l'enregistrement.</p></details>
+        <details class="apparait"><summary>Il me faut quel Mac ?</summary><p>Un Mac avec puce Apple (M1 ou plus récent) sous macOS 13.5 minimum. Les Mac Intel ne sont pas compatibles : la transcription utilise la puce Apple.</p></details>
+        <details class="apparait"><summary>C'est vraiment gratuit ?</summary><p>L'app est gratuite. Pour rédiger les comptes rendus, elle utilise ton abonnement Claude (Pro, Max) ou ChatGPT (Plus, Pro, Business), ou une clé API facturée à l'usage.</p></details>
+        <details class="apparait"><summary>Et la voix de mes interlocuteurs en visio ?</summary><p>MiroRecap enregistre ton micro et le son qui sort de ton Mac, puis mélange les deux. macOS te demande l'autorisation une fois. Avec un casque, le son est encore plus propre.</p></details>
+        <details class="apparait"><summary>Ça marche avec mon iPhone ?</summary><p>Oui. Enregistre avec le Dictaphone puis partage le fichier dans iCloud Drive → Comptes-rendus → _A-traiter. Ton Mac s'en occupe dès qu'il est allumé.</p></details>
+        <details class="apparait"><summary>Pourquoi macOS demande une confirmation à l'ouverture ?</summary><p>MiroRecap est une app indépendante, pas encore signée par Apple. macOS demande donc de confirmer une fois, dans Réglages Système → Confidentialité et sécurité.</p></details>
+        <details class="apparait"><summary>J'ai le droit d'enregistrer un appel ?</summary><p>En France, enregistrer quelqu'un sans le prévenir est interdit. Préviens toujours ton interlocuteur avant de lancer l'enregistrement.</p></details>
       </div>
     </div>
   </section>
 </main>
 
-<footer class="pied">
-  <div class="conteneur">
-    <span>MiroRecap · fait par Miro · Paris, 2026</span>
-    <nav aria-label="Liens">
-      <a href="https://github.com/mohamedscaler/Mirorecap">Code source</a>
-      <a href="https://github.com/mohamedscaler/Mirorecap/issues">Signaler un bug</a>
-    </nav>
+<footer>
+  <div class="large">
+    <span>MiroRecap · fait par Miro à Paris. MiroRecap n'est affilié ni à Anthropic ni à OpenAI.</span>
+    <span class="liens"><a href="https://github.com/mohamedscaler/Mirorecap">Code source</a><a href="https://github.com/mohamedscaler/Mirorecap/issues">Signaler un bug</a></span>
   </div>
 </footer>
 
 <script>
-  document.body.classList.remove("sans-js");
-  // Apparition douce des éléments au défilement, en léger décalé
-  const obs = new IntersectionObserver((entrees) => {
-    entrees.forEach((e) => {
-      if (!e.isIntersecting) return;
-      const freres = [...e.target.parentElement.children].filter((x) => x.classList.contains("apparait"));
-      e.target.style.transitionDelay = `${Math.max(0, freres.indexOf(e.target)) * 70}ms`;
-      e.target.classList.add("vu");
-      obs.unobserve(e.target);
-    });
-  }, { threshold: 0.1 });
-  document.querySelectorAll(".apparait").forEach((el) => obs.observe(el));
+  // Apparition douce des blocs au défilement
+  const io = new IntersectionObserver((entrees) => {
+    for (const e of entrees) if (e.isIntersecting) { e.target.classList.add("visible"); io.unobserve(e.target); }
+  }, { rootMargin: "0px 0px -8% 0px" });
+  document.querySelectorAll(".apparait").forEach((el) => io.observe(el));
 </script>
 </body>
 </html>
