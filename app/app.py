@@ -361,7 +361,19 @@ def analyser(transcription, date):
     systeme = instructions_analyse(noms, projets)
     contenu = f"Date de l'enregistrement : {date:%d/%m/%Y %H:%M}\n\nTranscription :\n{transcription}"
 
-    donnees = analyser_abonnement(systeme, contenu) if moteur == "abonnement" else analyser_api(systeme, contenu, noms)
+    if moteur == "abonnement":
+        try:
+            donnees = analyser_abonnement(systeme, contenu)
+        except Exception as e:
+            # Mode Automatique : si l'abonnement échoue (pas connecté, limite atteinte…)
+            # et qu'une clé API existe, on passe par l'API plutôt que d'échouer
+            if CONFIG.get("moteur", "auto") == "auto" and CONFIG.get("cle_api_anthropic"):
+                print(f"Abonnement indisponible ({e}), analyse via la clé API.", flush=True)
+                donnees = analyser_api(systeme, contenu, noms)
+            else:
+                raise
+    else:
+        donnees = analyser_api(systeme, contenu, noms)
     if donnees.get("projet") not in noms:
         donnees["projet"] = PROJET_PAR_DEFAUT
     for cle in ("titre", "compte_rendu"):
@@ -401,7 +413,10 @@ def analyser_abonnement(systeme, contenu):
         enveloppe = json.loads(sortie)
         if isinstance(enveloppe, dict):
             if enveloppe.get("is_error"):
-                raise RuntimeError(f"Claude Code : {enveloppe.get('result') or 'erreur'}")
+                resultat = enveloppe.get("result") or "erreur"
+                if "login" in resultat.lower():
+                    resultat = "pas connecté à ton compte Claude (Réglages → Se connecter, puis /login)"
+                raise RuntimeError(f"Claude Code : {resultat}")
             texte = enveloppe.get("result", "") or ""
     except json.JSONDecodeError:
         pass
