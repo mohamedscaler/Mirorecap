@@ -37,6 +37,9 @@ cp -R app/app.py app/fenetre.py app/VERSION app/icone.png app/ui "$RES/app/"
 
 # 4. Lanceur natif
 clang -O2 -fobjc-arc -arch arm64 -mmacosx-version-min=13.5 -framework Cocoa -framework UserNotifications -o "$APP/Contents/MacOS/MiroRecap" app/lanceur.m
+# Capture du son système (voix des interlocuteurs en visio)
+clang -O2 -fobjc-arc -arch arm64 -mmacosx-version-min=13.5 -framework Foundation -framework ScreenCaptureKit \
+  -framework CoreMedia -framework AudioToolbox -o "$APP/Contents/MacOS/capture-systeme" app/capture-systeme.m
 
 # 5. Icône
 ICONSET="dist/MiroRecap.iconset"

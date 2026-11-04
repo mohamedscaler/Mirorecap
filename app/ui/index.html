@@ -143,6 +143,9 @@
   .bandeau .icone { color: var(--orange); }
   .bandeau.maj .icone { color: var(--bleu); }
   .bandeau .texte { flex: 1; }
+  .bandeau.whisper .icone { color: var(--bleu); }
+  .progression { height: 4px; border-radius: 2px; background: var(--separateur, rgba(128,128,128,.25)); margin-top: 6px; overflow: hidden; }
+  .progression span { display: block; height: 100%; width: 0; background: var(--bleu); border-radius: 2px; transition: width .6s ease; }
   .vue { flex: 1; overflow: hidden; display: flex; flex-direction: column; animation: apparition 200ms var(--courbe); }
   @keyframes apparition { from { opacity: 0; } }
 
@@ -238,6 +241,11 @@
   .point.ok { background: var(--vert); }
   .coche { color: var(--bleu); visibility: hidden; }
   .rang[aria-checked="true"] .coche { visibility: visible; }
+  /* Interrupteur façon macOS */
+  .interrupteur { flex: none; width: 32px; height: 19px; border-radius: 10px; background: rgba(128,128,128,.35); position: relative; transition: background .2s; }
+  .interrupteur::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .2s; }
+  .rang[aria-checked="true"] .interrupteur { background: var(--bleu); }
+  .rang[aria-checked="true"] .interrupteur::after { transform: translateX(13px); }
   .chemin { font-size: 12px; color: var(--second); word-break: break-all; }
 
   /* Feuille (dialogue) façon macOS */
@@ -411,6 +419,13 @@
     <span id="maj-texte" class="texte"></span>
     <button id="maj-bouton" class="bouton principal">Mettre à jour</button>
   </div>
+  <div id="bandeau-whisper" class="bandeau whisper" hidden>
+    <svg class="icone" width="18" height="18"><use href="#i-fleche"/></svg>
+    <div class="texte">
+      <div id="whisper-texte">Téléchargement du modèle de transcription…</div>
+      <div class="progression"><span id="whisper-barre"></span></div>
+    </div>
+  </div>
   <div id="alerte" class="bandeau" hidden>
     <svg class="icone" width="18" height="18"><use href="#i-alerte"/></svg>
     <span class="texte">Connecte ton abonnement Claude (ou une clé API) pour que tes enregistrements soient analysés.</span>
@@ -488,7 +503,16 @@
 
         <p class="titre-groupe">Transcription</p>
         <div id="modeles" class="groupe" role="radiogroup" aria-label="Modèle Whisper"></div>
-        <p class="note">Whisper tourne sur ton Mac, l'audio ne quitte pas ta machine. Un modèle se télécharge au premier usage.</p>
+        <p class="note">Whisper tourne sur ton Mac, l'audio ne quitte pas ta machine. Le modèle choisi se télécharge une seule fois.</p>
+
+        <p class="titre-groupe">Enregistrement</p>
+        <div class="groupe">
+          <div id="son-systeme" class="rang cliquable" role="switch" tabindex="0" aria-checked="true">
+            <div class="corps"><div>Son de l'ordinateur</div><div id="son-systeme-etat" class="d">Capte aussi la voix de tes interlocuteurs en visio</div></div>
+            <span class="interrupteur" aria-hidden="true"></span>
+          </div>
+        </div>
+        <p class="note">Meet, Zoom, Teams, FaceTime… MiroRecap enregistre ton micro et le son qui sort du Mac, puis les mélange. Au premier enregistrement, macOS demande l'autorisation « Enregistrement de l'écran et audio système » : seul l'audio est gardé. Avec un casque, le son est plus propre.</p>
 
         <p class="titre-groupe">Stockage</p>
         <div class="groupe">
@@ -707,6 +731,31 @@
     else if (e.statut) statut = e.statut + (e.en_attente ? ` · ${e.en_attente} en attente` : "");
     if (e.erreurs && !e.enregistrement) statut += ` · ${pluriel(e.erreurs, "erreur")}`;
     $("#statut").textContent = statut;
+
+    // Téléchargement du modèle Whisper
+    const md = e.modele || {};
+    $("#bandeau-whisper").hidden = md.etat !== "telechargement";
+    if (md.etat === "telechargement") {
+      const mo = (o) => Math.round(o / 1e6).toLocaleString("fr-FR");
+      const pct = md.total ? Math.min(100, Math.floor(100 * md.fait / md.total)) : 0;
+      $("#whisper-texte").textContent = md.total
+        ? `Téléchargement du modèle de transcription · ${pct} % (${mo(md.fait)} / ${mo(md.total)} Mo)`
+        : `Téléchargement du modèle de transcription · ${mo(md.fait)} Mo`;
+      $("#whisper-barre").style.width = (md.total ? pct : 5) + "%";
+      if (!e.enregistrement && !e.statut) $("#statut").textContent = `Téléchargement de Whisper · ${md.total ? pct + " %" : mo(md.fait) + " Mo"}`;
+    }
+
+    // Capture du son de l'ordinateur
+    const ss = e.son_systeme || {};
+    const textes = {
+      ok: "Actif · ton micro et le son du Mac sont enregistrés",
+      refusee: "Non autorisé · Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran et audio système → active MiroRecap, puis relance l'app",
+      off: "Désactivé · seul ton micro est enregistré",
+      indisponible: "Indisponible sur cette installation",
+    };
+    if ($("#son-systeme").getAttribute("aria-checked") === "true") {
+      $("#son-systeme-etat").textContent = textes[ss.etat] || "Capte aussi la voix de tes interlocuteurs en visio";
+    }
 
     $("#alerte").hidden = e.cle_ok;
 
@@ -974,6 +1023,8 @@
         <div class="corps"><div>${esc(m.nom)}</div><div class="d">${esc(m.detail)}</div></div>
         <span class="coche">${icone("i-coche", 15)}</span>
       </div>`).join("");
+    $("#son-systeme").setAttribute("aria-checked", r.son_systeme);
+    if (!r.son_systeme) $("#son-systeme-etat").textContent = "Désactivé · seul ton micro est enregistré";
     $("#dossier-actuel").textContent = r.dossier_actuel;
     $("#dossier").value = r.dossier_personnalise;
     $("#erreurs-etat").innerHTML = r.erreurs
@@ -998,9 +1049,22 @@
     try {
       await api("/api/reglages", { modele_whisper: r.dataset.modele });
       document.querySelectorAll("[data-modele]").forEach((x) => x.setAttribute("aria-checked", x === r));
-      message("Modèle changé. Il se télécharge au prochain enregistrement.");
+      message("Modèle changé. Il se télécharge maintenant, la progression s'affiche en haut.");
     } catch (err) { message(err.message); }
   }
+  async function basculerSonSysteme() {
+    const actif = $("#son-systeme").getAttribute("aria-checked") !== "true";
+    try {
+      await api("/api/reglages", { son_systeme: actif });
+      $("#son-systeme").setAttribute("aria-checked", actif);
+      $("#son-systeme-etat").textContent = actif ? "Activé · s'applique au prochain enregistrement" : "Désactivé · seul ton micro est enregistré";
+    } catch (err) { message(err.message); }
+  }
+  $("#son-systeme").addEventListener("click", basculerSonSysteme);
+  $("#son-systeme").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); basculerSonSysteme(); }
+  });
+
   $("#modeles").addEventListener("click", (ev) => { const r = ev.target.closest("[data-modele]"); if (r) choisirModele(r); });
   $("#modeles").addEventListener("keydown", (ev) => {
     const r = ev.target.closest("[data-modele]");

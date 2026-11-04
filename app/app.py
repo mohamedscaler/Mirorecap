@@ -36,6 +36,7 @@ from pathlib import Path
 
 import rumps
 import sounddevice as sd
+import numpy as np
 import soundfile as sf
 
 # ---------------------------------------------------------------------------
@@ -72,6 +73,8 @@ CONFIG_DEFAUT = {
     "moteur": "auto",
     "modele_abonnement": "sonnet",
     "langue": "fr",
+    # Enregistre aussi le son qui sort du Mac (voix des interlocuteurs en visio)
+    "son_systeme": True,
 }
 
 
@@ -216,8 +219,17 @@ def ouvrir_finder(chemin, reveler=False):
 # Enregistrement micro
 # ---------------------------------------------------------------------------
 
+CAPTURE_SYSTEME = DOSSIER_CODE.parent.parent / "MacOS" / "capture-systeme"
+DOSSIER_CAPTURE = DOSSIER_APP / "capture"   # pistes « son système » le temps du mixage
+
+# État de la capture du son système, affiché dans la fenêtre :
+# "" (pas encore utilisée), "ok", "refusee", "off" (désactivée), "indisponible"
+SON_SYSTEME = {"etat": "", "message": ""}
+
+
 class Enregistreur:
-    """Enregistre le micro par défaut dans un .wav.
+    """Enregistre le micro par défaut dans un .wav, et en parallèle le son du Mac
+    (outil natif capture-systeme) dans une seconde piste, mélangée à l'arrêt.
     Le callback audio pousse les blocs dans une file, un thread séparé les écrit
     sur le disque : le callback ne bloque jamais (sinon trous dans l'audio)."""
 
@@ -252,18 +264,171 @@ class Enregistreur:
         self._ecrivain.start()
         self._flux = sd.InputStream(samplerate=frequence, channels=1, dtype="int16", callback=callback)
         self._flux.start()
+        self._demarrer_son_systeme()
+
+    def _demarrer_son_systeme(self):
+        self.systeme, self._capture = None, None
+        if not CONFIG.get("son_systeme", True):
+            SON_SYSTEME.update(etat="off", message="")
+            return
+        if not CAPTURE_SYSTEME.exists():
+            SON_SYSTEME.update(etat="indisponible", message="Outil de capture absent (lancement hors de l'app ?)")
+            return
+        DOSSIER_CAPTURE.mkdir(parents=True, exist_ok=True)
+        self.systeme = DOSSIER_CAPTURE / (self.chemin.stem + ".wav")
+        self._capture = subprocess.Popen(
+            [str(CAPTURE_SYSTEME), str(self.systeme)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+        )
+        capture = self._capture
+
+        def surveiller():
+            # Un refus arrive en moins d'une seconde ; au-delà, la capture tourne
+            try:
+                code = capture.wait(timeout=4)
+            except subprocess.TimeoutExpired:
+                SON_SYSTEME.update(etat="ok", message="")
+                return
+            erreur = (capture.stderr.read() or "").strip()
+            print(f"capture-systeme ({code}) : {erreur}", flush=True)
+            deja_refusee = SON_SYSTEME["etat"] == "refusee"
+            SON_SYSTEME.update(etat="refusee", message=erreur)
+            if not deja_refusee:
+                notifier("Seul ton micro est enregistré",
+                         "Pour capter la voix de tes interlocuteurs en visio : Réglages Système → "
+                         "Confidentialité et sécurité → Enregistrement de l'écran et audio système → MiroRecap.")
+
+        threading.Thread(target=surveiller, daemon=True).start()
 
     def arreter(self):
         self._flux.stop()
         self._flux.close()
         self.actif = False
+        if self._capture and self._capture.poll() is None:
+            self._capture.terminate()   # SIGTERM : l'outil finalise son fichier WAV
+            try:
+                self._capture.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._capture.kill()
         self._ecrivain.join()  # attend que tout soit bien écrit
-        return self.chemin, self.debut
+        systeme = self.systeme if self.systeme and self.systeme.exists() else None
+        return self.chemin, self.debut, systeme
+
+
+def mixer_pistes(micro, systeme):
+    """Mélange la piste micro et la piste son système en un seul WAV 16 kHz mono,
+    qui remplace la piste micro. 16 kHz suffit pour la voix (c'est ce que lit Whisper)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        pistes = []
+        for i, source in enumerate((micro, systeme)):
+            cible = Path(tmp) / f"{i}.wav"
+            r = subprocess.run(
+                ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(source), str(cible)],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                raise RuntimeError(f"conversion impossible : {r.stderr.strip()}")
+            pistes.append(cible)
+        mix = Path(tmp) / "mix.wav"
+        # Par blocs de 30 s : un appel d'une heure ne charge pas tout en mémoire
+        bloc = 16000 * 30
+        with sf.SoundFile(pistes[0]) as a, sf.SoundFile(pistes[1]) as b, \
+                sf.SoundFile(mix, "w", samplerate=16000, channels=1, subtype="PCM_16") as sortie:
+            while True:
+                xa, xb = a.read(bloc, dtype="float32"), b.read(bloc, dtype="float32")
+                if not len(xa) and not len(xb):
+                    break
+                somme = np.zeros(max(len(xa), len(xb)), dtype="float32")
+                somme[:len(xa)] += xa
+                somme[:len(xb)] += xb
+                sortie.write(np.clip(somme, -1.0, 1.0))
+        shutil.move(str(mix), str(micro))
 
 
 # ---------------------------------------------------------------------------
 # Transcription locale (Whisper MLX)
 # ---------------------------------------------------------------------------
+
+# Téléchargement du modèle Whisper, suivi pour l'afficher (fenêtre + barre de menus)
+MODELE = {"etat": "", "modele": "", "fait": 0, "total": 0, "message": ""}
+VERROU_MODELE = threading.Lock()
+
+
+def dossier_modele(repo):
+    from huggingface_hub import constants
+    return Path(constants.HF_HUB_CACHE) / ("models--" + repo.replace("/", "--"))
+
+
+def modele_local(repo):
+    """Chemin du modèle s'il est complet sur le Mac, sinon None."""
+    from huggingface_hub import snapshot_download
+    try:
+        dossier = Path(snapshot_download(repo_id=repo, local_files_only=True))
+    except Exception:
+        return None
+    complet = (dossier / "config.json").exists() and any(dossier.glob("weights.*"))
+    return dossier if complet else None
+
+
+def assurer_modele(repo=None):
+    """Télécharge le modèle Whisper s'il manque, en suivant la progression.
+    Retourne son dossier local. Un seul téléchargement à la fois."""
+    repo = repo or CONFIG["modele_whisper"]
+    with VERROU_MODELE:
+        local = modele_local(repo)
+        if local:
+            MODELE.update(etat="pret", modele=repo, message="")
+            return local
+        from huggingface_hub import HfApi, snapshot_download
+        total = 0
+        try:
+            infos = HfApi().model_info(repo, files_metadata=True)
+            total = sum(f.size or 0 for f in infos.siblings)
+        except Exception:
+            pass  # taille inconnue : on affichera seulement les Mo téléchargés
+        MODELE.update(etat="telechargement", modele=repo, fait=0, total=total, message="")
+        blobs = dossier_modele(repo) / "blobs"
+        fini = threading.Event()
+
+        def suivre():
+            # Taille des fichiers déjà écrits dans le cache (y compris ceux en cours)
+            while not fini.wait(1):
+                fait = 0
+                for f in blobs.glob("*") if blobs.exists() else []:
+                    try:
+                        fait += f.stat().st_size
+                    except OSError:
+                        pass  # fichier renommé entre-temps
+                MODELE["fait"] = min(fait, total) if total else fait
+
+        threading.Thread(target=suivre, daemon=True).start()
+        try:
+            snapshot_download(repo_id=repo)
+        except Exception as e:
+            MODELE.update(etat="erreur", message=str(e))
+            raise RuntimeError("téléchargement de Whisper impossible, vérifie ta connexion internet") from e
+        finally:
+            fini.set()
+        MODELE.update(etat="pret", fait=total, message="")
+        notifier("Transcription prête", "Le modèle Whisper est installé sur ton Mac.")
+        return modele_local(repo) or repo
+
+
+def preparer_modele_en_fond():
+    def tache():
+        try:
+            assurer_modele()
+        except Exception as e:
+            print(f"Téléchargement de Whisper : {e}", flush=True)
+    threading.Thread(target=tache, daemon=True).start()
+
+
+def texte_progression():
+    if MODELE["total"]:
+        return f"{int(100 * MODELE['fait'] / MODELE['total'])} %"
+    return f"{MODELE['fait'] // 1_000_000} Mo"
+
 
 def transcrire(chemin_audio):
     """Retourne la transcription horodatée : '[mm:ss] texte' par ligne.
@@ -284,7 +449,7 @@ def transcrire(chemin_audio):
 
     resultat = mlx_whisper.transcribe(
         audio,
-        path_or_hf_repo=CONFIG["modele_whisper"],
+        path_or_hf_repo=str(assurer_modele()),
         language=CONFIG["langue"],
     )
     lignes = []
@@ -809,6 +974,7 @@ def lire_reglages():
         "claude_code": trouver_claude_code(),
         "claude_connecte": bool(CONFIG.get("jeton_claude_code")),
         "connexion": CONNEXION,
+        "son_systeme": CONFIG.get("son_systeme", True),
     }
 
 
@@ -819,7 +985,13 @@ def sauver_reglages(donnees):
     if donnees.get("moteur") in ("auto", "abonnement", "api"):
         CONFIG["moteur"] = donnees["moteur"]
     if donnees.get("modele_whisper") in {m["id"] for m in MODELES_WHISPER}:
+        change = donnees["modele_whisper"] != CONFIG["modele_whisper"]
         CONFIG["modele_whisper"] = donnees["modele_whisper"]
+        if change:
+            sauver_config(CONFIG)
+            preparer_modele_en_fond()   # télécharge tout de suite, pas au prochain appel
+    if isinstance(donnees.get("son_systeme"), bool):
+        CONFIG["son_systeme"] = donnees["son_systeme"]
     if "dossier_sortie" in donnees and donnees["dossier_sortie"].strip() != CONFIG.get("dossier_sortie", ""):
         CONFIG["dossier_sortie"] = donnees["dossier_sortie"].strip()
         redemarrage = True  # les chemins sont calculés au démarrage
@@ -999,8 +1171,15 @@ class App(rumps.App):
             if f.suffix.lower() in EXTENSIONS_AUDIO and f.stat().st_size > 1024:
                 shutil.move(str(f), str(chemin_libre(DOSSIER_IMPORT / f.name)))
 
+        # Pistes « son système » d'un enregistrement interrompu : inutilisables seules
+        if DOSSIER_CAPTURE.exists():
+            shutil.rmtree(DOSSIER_CAPTURE, ignore_errors=True)
+        self.pistes_systeme = {}         # piste micro → piste son système à mélanger
+
         threading.Thread(target=self.travailleur, daemon=True).start()
         threading.Thread(target=self.boucle_maj, daemon=True).start()
+        # Premier lancement : le modèle Whisper se télécharge tout de suite, en fond
+        preparer_modele_en_fond()
         # L'UI de la barre de menus ne doit être modifiée que depuis le thread principal
         self.timer = rumps.Timer(self.tic, 1)
         self.timer.start()
@@ -1033,6 +1212,8 @@ class App(rumps.App):
             "maj": self.maj,
             "maj_en_cours": self.maj_en_cours,
             "derniere_erreur": self.derniere_erreur,
+            "modele": MODELE,
+            "son_systeme": SON_SYSTEME,
         }
 
     # --- Mises à jour ---------------------------------------------------------
@@ -1090,7 +1271,9 @@ class App(rumps.App):
             if not self.enreg.actif:
                 self.enreg.demarrer()
             else:
-                chemin, debut = self.enreg.arreter()
+                chemin, debut, systeme = self.enreg.arreter()
+                if systeme:
+                    self.pistes_systeme[chemin] = systeme
                 self.en_file.add(chemin)
                 self.file_traitement.put((chemin, debut))
 
@@ -1106,7 +1289,12 @@ class App(rumps.App):
             self.title = f"🔴 {m:02d}:{s:02d}"
             self.bouton.title = "Arrêter et analyser"
         else:
-            self.title = f"⏳ {self.statut}" if self.statut else "🎙"
+            if MODELE["etat"] == "telechargement":
+                self.title = f"⬇ Whisper {texte_progression()}"
+            elif self.statut:
+                self.title = f"⏳ {self.statut}"
+            else:
+                self.title = "🎙"
             self.bouton.title = "Démarrer l'enregistrement"
 
         if self.dernier:
@@ -1173,6 +1361,18 @@ class App(rumps.App):
             chemin, date = self.file_traitement.get()
             transcription = None
             try:
+                systeme = self.pistes_systeme.pop(chemin, None)
+                if systeme:
+                    self.statut = "Mixage…"
+                    try:
+                        mixer_pistes(chemin, systeme)
+                    except Exception as e:
+                        print(f"Mixage impossible, micro seul : {e}", flush=True)
+                    finally:
+                        systeme.unlink(missing_ok=True)
+                if MODELE["etat"] != "pret":
+                    self.statut = "Téléchargement de Whisper…"
+                    assurer_modele()
                 self.statut = "Transcription…"
                 transcription = transcrire(chemin)
                 if not transcription:

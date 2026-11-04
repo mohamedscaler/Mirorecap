@@ -24,6 +24,7 @@ Au premier lancement, la fenêtre s'ouvre sur les Réglages :
 1. **Avec ton abonnement Claude** : clique sur **Installer et connecter**. Le Terminal s'ouvre et installe Claude Code. Quand il te le demande, choisis **Claude account** et connecte-toi dans le navigateur, puis tape `/exit`.
    **Ou avec une clé API** : colle-la dans « Clé API Anthropic ».
 2. Accepte l'accès au micro et à iCloud Drive quand macOS le demande.
+   Au premier enregistrement, macOS demande aussi « Enregistrement de l'écran et audio système » : c'est ce qui capte la voix de tes interlocuteurs en visio (seul l'audio est gardé). Accepte puis relance MiroRecap.
 
 MiroRecap se lance tout seul à chaque démarrage du Mac. La première transcription télécharge le modèle Whisper (internet nécessaire), donc elle prend plus de temps. Ensuite, la transcription se fait hors ligne.
 
