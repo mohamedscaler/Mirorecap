@@ -1,0 +1,36 @@
+# Remplace l'icône de l'app à partir d'une image (URL) : détoure la tuile,
+# applique l'arrondi macOS et enregistre app/icone.png + docs/img/icone.png.
+name: Mettre à jour l'icône
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Adresse de l'image source (PNG ou JPG)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  icone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Télécharger l'image
+        run: curl -fsSL -o source.png "${{ github.event.inputs.url }}"
+
+      - name: Préparer l'icône
+        run: |
+          pip install -q pillow numpy
+          python3 build/preparer_icone.py source.png app/icone.png
+          cp app/icone.png docs/img/icone.png
+
+      - name: Enregistrer dans le repo
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add app/icone.png docs/img/icone.png
+          git commit -m "Nouvelle icône de l'app" || echo "Icône inchangée"
+          git push
