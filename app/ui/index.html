@@ -269,6 +269,93 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
   }
+
+  /* =====================================================================
+     Liquid Glass : la fenêtre laisse voir le bureau flouté (vibrancy macOS),
+     les panneaux flottent par-dessus en verre translucide.
+     ===================================================================== */
+  :root {
+    --verre: rgba(255, 255, 255, .52);
+    --verre-fort: rgba(255, 255, 255, .72);
+    --verre-bord: rgba(255, 255, 255, .7);
+    --verre-ombre: 0 10px 40px rgba(0, 0, 0, .10), 0 1px 3px rgba(0, 0, 0, .06);
+    --reflet: inset 0 1px 0 rgba(255, 255, 255, .85), inset 0 0 0 1px rgba(255, 255, 255, .35);
+    --flou: blur(28px) saturate(180%);
+    --fond-fenetre: rgba(236, 236, 241, .55);
+    --page: transparent;
+    --groupe: var(--verre);
+    --barre: var(--verre);
+    --fenetre: transparent;
+    --remplissage: rgba(255, 255, 255, .45);
+    --remplissage-fort: rgba(255, 255, 255, .75);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --verre: rgba(44, 44, 48, .48);
+      --verre-fort: rgba(58, 58, 62, .7);
+      --verre-bord: rgba(255, 255, 255, .14);
+      --verre-ombre: 0 10px 40px rgba(0, 0, 0, .35), 0 1px 3px rgba(0, 0, 0, .3);
+      --reflet: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 0 0 1px rgba(255, 255, 255, .07);
+      --fond-fenetre: rgba(24, 24, 28, .55);
+      --remplissage: rgba(255, 255, 255, .07);
+      --remplissage-fort: rgba(255, 255, 255, .14);
+    }
+  }
+  html { background: transparent; }
+  body {
+    background: var(--fond-fenetre);
+    padding: 10px; gap: 10px; grid-template-columns: 236px 1fr;
+  }
+  .verre, .barre, main {
+    background: var(--verre);
+    -webkit-backdrop-filter: var(--flou); backdrop-filter: var(--flou);
+    box-shadow: var(--reflet), var(--verre-ombre);
+    border: 0; border-radius: 22px;
+  }
+  main { overflow: hidden; }
+  .barre { padding: 12px 8px 8px; }
+  .elt { border-radius: 10px; padding: 6px 8px; }
+  .elt[aria-current="page"] { background: var(--remplissage-fort); box-shadow: var(--reflet); }
+  /* Enregistreur : capsule de verre */
+  .enregistreur { background: var(--verre-fort); border-radius: 18px; box-shadow: var(--reflet); }
+  .rec { border-color: rgba(255, 59, 48, .25); background: rgba(255, 255, 255, .25); }
+  .rec-centre { box-shadow: 0 4px 14px rgba(255, 59, 48, .45), inset 0 1px 0 rgba(255, 255, 255, .45); }
+  /* Liste et lecteur */
+  .colonne-liste { border-right: 1px solid var(--separateur); background: rgba(255, 255, 255, .06); }
+  .rangee { border-radius: 12px; }
+  .rangee[aria-current="true"] { box-shadow: 0 4px 16px rgba(0, 122, 255, .35), inset 0 1px 0 rgba(255, 255, 255, .35); }
+  .liste li + li .rangee { box-shadow: none; }
+  .rangee[aria-current="true"] { box-shadow: 0 4px 16px rgba(0, 122, 255, .35), inset 0 1px 0 rgba(255, 255, 255, .35); }
+  .md .transcription, .bloc-verre { background: var(--remplissage); border-radius: 16px; box-shadow: var(--reflet); }
+  /* Boutons en verre, le principal en bleu brillant */
+  .bouton { background: var(--remplissage-fort); border-radius: 999px; padding: 5px 14px; box-shadow: var(--reflet); }
+  .bouton.principal { background: var(--bleu); box-shadow: 0 4px 14px rgba(0, 122, 255, .3), inset 0 1px 0 rgba(255, 255, 255, .35); }
+  .champ, select, textarea { background: var(--remplissage); border-radius: 10px; box-shadow: inset 0 0 0 1px var(--separateur); }
+  .groupe { background: var(--verre-fort); border-radius: 16px; box-shadow: var(--reflet); }
+  .bandeau { background: var(--verre-fort); border-radius: 14px; box-shadow: var(--reflet), var(--verre-ombre); }
+  dialog { background: var(--verre-fort); -webkit-backdrop-filter: var(--flou); backdrop-filter: var(--flou); border-radius: 22px; box-shadow: var(--reflet), 0 30px 80px rgba(0, 0, 0, .3); }
+  dialog::backdrop { background: rgba(0, 0, 0, .15); }
+  .message { background: var(--verre-fort); -webkit-backdrop-filter: var(--flou); backdrop-filter: var(--flou); border-radius: 999px; box-shadow: var(--reflet), var(--verre-ombre); }
+  .etiquette-projet {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 8px; border-radius: 999px;
+    background: var(--remplissage-fort); box-shadow: var(--reflet); font-size: 12px; position: relative;
+  }
+  .etiquette-projet select { position: absolute; inset: 0; opacity: 0; cursor: default; }
+
+  /* ============ Page d'un projet ============ */
+  .projet-tete { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .projet-tete .actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .retour { color: var(--bleu); display: inline-flex; align-items: center; gap: 4px; margin-bottom: 10px; }
+  .retour svg { transform: rotate(180deg); }
+  .synthese { padding: 18px 20px; margin-top: 8px; }
+  .synthese.vide { color: var(--second); text-align: center; padding: 26px; }
+  .synthese .md { max-width: none; margin: 0; font-size: 13.5px; }
+  .synthese .md h2:first-child { display: none; }
+  .synthese .md h2:first-child + p { margin-top: 0; font-size: 15px; font-weight: 500; }
+  .synthese-pied { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 11px; color: var(--second); padding: 0 4px; }
+  .action-ligne .corps div:first-child { white-space: normal; }
+  .chargement { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: tourne .8s linear infinite; vertical-align: -2px; }
+  @keyframes tourne { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -360,6 +447,13 @@
         <div id="liste-projets" class="groupe"></div>
         <p class="note">Chaque projet est un dossier dans Comptes-rendus. Ce qui ne correspond à aucun projet va dans Divers.</p>
       </div>
+    </div>
+  </section>
+
+  <!-- Page d'un projet -->
+  <section id="vue-projet" class="vue" hidden>
+    <div class="defilement">
+      <div class="contenu" id="page-projet"></div>
     </div>
   </section>
 
@@ -512,9 +606,13 @@
 
     let html = "", liste = null, dansTranscription = false, debut = true;
     const fermer = () => { if (liste) { html += `</${liste}>`; liste = null; } };
+    let masque = false;
     for (const brute of lignes) {
       const l = brute.trimEnd();
       let m;
+      // La section « Contexte pour Claude » sert au bouton de copie, pas à la lecture
+      if (/^##\s+Contexte pour Claude/.test(l)) { fermer(); masque = true; continue; }
+      if (masque) { if (/^##\s|^---\s*$/.test(l)) masque = false; else continue; }
       if (!l.trim()) { fermer(); continue; }
       if (l.trim() === "---") { fermer(); debut = false; continue; }
       if ((m = l.match(/^#{2,6}\s+(.*)/))) {
@@ -546,32 +644,37 @@
   }
 
   // ============ Navigation ============
-  const VUES = ["comptes-rendus", "projets", "reglages"];
+  const VUES = ["comptes-rendus", "projets", "reglages", "projet"];
   let filtreProjet = "";
 
   function afficher() {
-    const vue = VUES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "comptes-rendus";
+    const h = location.hash.slice(1);
+    const projetOuvert = h.startsWith("projet/") ? decodeURIComponent(h.slice(7)) : "";
+    const vue = projetOuvert ? "projet" : (VUES.includes(h) ? h : "comptes-rendus");
     VUES.forEach((v) => { $(`#vue-${v}`).hidden = v !== vue; });
     document.querySelectorAll(".elt[data-vue]").forEach((a) => {
-      const actif = a.dataset.vue === vue && !(vue === "comptes-rendus" && filtreProjet);
+      const actif = (a.dataset.vue === vue || (vue === "projet" && a.dataset.vue === "projets" && false)) && !(vue === "comptes-rendus" && filtreProjet);
       a.toggleAttribute("aria-current", actif);
       if (actif) a.setAttribute("aria-current", "page");
     });
     document.querySelectorAll("#raccourcis-projets .elt").forEach((b) => {
-      const actif = vue === "comptes-rendus" && b.dataset.projet === filtreProjet;
+      const actif = vue === "projet" && b.dataset.projet === projetOuvert;
       b.toggleAttribute("aria-current", actif);
       if (actif) b.setAttribute("aria-current", "page");
     });
     if (vue === "comptes-rendus") chargerComptesRendus();
     if (vue === "projets") chargerProjets();
     if (vue === "reglages") chargerReglages();
+    if (vue === "projet") chargerPageProjet(projetOuvert);
   }
   window.addEventListener("hashchange", afficher);
   document.querySelector('.elt[data-vue="comptes-rendus"]').addEventListener("click", () => { filtreProjet = ""; });
 
   // Raccourcis projets dans la barre latérale
+  let listeProjets = [];
   async function chargerRaccourcis() {
     const projets = await api("/api/projets");
+    listeProjets = projets.map((p) => p.nom);
     const total = projets.reduce((s, p) => s + p.nb, 0);
     $("#nb-total").textContent = total || "";
     $("#raccourcis-projets").innerHTML = projets.map((p) => `
@@ -583,10 +686,7 @@
   $("#raccourcis-projets").addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-projet]");
     if (!b) return;
-    filtreProjet = b.dataset.projet;
-    selection = null;
-    if (location.hash !== "#comptes-rendus") location.hash = "#comptes-rendus";
-    afficher();
+    location.hash = "#projet/" + encodeURIComponent(b.dataset.projet);
   });
 
   // ============ Enregistrement + état ============
@@ -654,7 +754,9 @@
     $("#titre-liste").textContent = filtreProjet || "Comptes rendus";
     rendreListe();
     const visibles = filtrer();
-    if (!selection && visibles.length) ouvrirCompteRendu(visibles[0]);
+    const choisi = selection && visibles.find((c) => c.projet === selection.projet && c.fichier === selection.fichier);
+    if (choisi) ouvrirCompteRendu(choisi);
+    else if (visibles.length) ouvrirCompteRendu(visibles[0]);
     if (!visibles.length) { selection = null; $("#lecteur").innerHTML = `<div class="vide-lecteur"><div>${icone("i-doc", 40)}Choisis un compte rendu</div></div>`; }
   }
 
@@ -693,8 +795,14 @@
     $("#lecteur").innerHTML = `
       <header class="lecteur-tete">
         <h1>${esc(c.titre)}</h1>
-        <p class="meta"><span class="etiquette">${esc(c.projet)}</span><span>${esc(dateLongue(c.date))}</span></p>
+        <p class="meta">
+          <label class="etiquette-projet" title="Changer de projet">${icone("i-dossier", 11)}<span>${esc(c.projet)}</span> ▾
+            <select id="deplacer" aria-label="Déplacer vers un autre projet">${listeProjets.map((p) => `<option ${p === c.projet ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
+          </label>
+          <span>${esc(dateLongue(c.date))}</span>
+        </p>
         <div class="actions">
+          <button class="bouton principal" id="copier-claude">Copier pour Claude</button>
           <button class="bouton" id="copier">Copier le compte rendu</button>
           <button class="bouton" id="finder">Afficher dans le Finder</button>
         </div>
@@ -702,8 +810,25 @@
       <div class="md">${markdown(texte)}</div>`;
     $("#lecteur").scrollTop = 0;
     $("#finder").onclick = () => api("/api/ouvrir", { cible: "compte-rendu", projet: c.projet, fichier: c.fichier });
+    // Bloc de contexte compact pour Claude (ou, pour les anciens comptes rendus, le compte rendu sans la transcription)
+    $("#copier-claude").onclick = async () => {
+      const bloc = (texte.match(/```xml\n([\s\S]*?)\n```/) || [])[1]
+        || `<appel date="${dateLongue(c.date)}" projet="${c.projet}">\n<titre>${c.titre}</titre>\n${texte.split(/\n---\n/)[0].replace(/^# .*\n/, "").trim()}\n</appel>`;
+      try { await navigator.clipboard.writeText(bloc); message("Contexte copié : colle-le dans Claude."); }
+      catch (_) { message("Copie impossible."); }
+    };
+    $("#deplacer").onchange = async (ev) => {
+      try {
+        const r = await api("/api/deplacer", { projet: c.projet, fichier: c.fichier, vers: ev.target.value });
+        message(`Déplacé dans ${r.projet}.`);
+        selection = { ...c, projet: r.projet, fichier: r.fichier };
+        chargerRaccourcis(); await chargerComptesRendus();
+        const nouveau = comptesRendus.find((x) => x.projet === r.projet && x.fichier === r.fichier);
+        if (nouveau) ouvrirCompteRendu(nouveau);
+      } catch (err) { message(err.message); }
+    };
     $("#copier").onclick = async () => {
-      const sansTranscription = texte.split(/\n---\n/)[0];
+      const sansTranscription = texte.split(/\n---\n/)[0].replace(/\n## Contexte pour Claude[\s\S]*$/, "");
       try { await navigator.clipboard.writeText(sansTranscription); message("Compte rendu copié."); }
       catch (_) { message("Copie impossible."); }
     };
@@ -719,12 +844,12 @@
 
   function rendreProjets() {
     $("#liste-projets").innerHTML = projets.map((p, i) => `
-      <div class="rang ${p.modifiable ? "cliquable" : ""}" ${p.modifiable ? `data-p="${i}" role="button" tabindex="0"` : ""}>
+      <a class="rang cliquable" href="#projet/${encodeURIComponent(p.nom)}" style="color:inherit;text-decoration:none">
         <span class="icone-dossier">${icone("i-dossier", 18)}</span>
         <div class="corps"><div>${esc(p.nom)}</div><div class="d">${esc(p.description || "Sans description")}</div></div>
         <span class="second">${p.nb}</span>
-        ${p.modifiable ? `<span class="chevron">${icone("i-chevron", 12)}</span>` : ""}
-      </div>`).join("");
+        <span class="chevron">${icone("i-chevron", 12)}</span>
+      </a>`).join("");
   }
 
   let projetEdite = null;
@@ -738,14 +863,62 @@
     $("#p-nom").focus();
   }
   $("#nouveau-projet").addEventListener("click", () => ouvrirFeuille(null));
-  $("#liste-projets").addEventListener("click", (ev) => {
-    const r = ev.target.closest("[data-p]");
-    if (r) ouvrirFeuille(projets[+r.dataset.p]);
-  });
-  $("#liste-projets").addEventListener("keydown", (ev) => {
-    const r = ev.target.closest("[data-p]");
-    if (r && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); ouvrirFeuille(projets[+r.dataset.p]); }
-  });
+  // ============ Page d'un projet ============
+  let projetCourant = null, suiviSynthese = null;
+
+  async function chargerPageProjet(nom) {
+    let p;
+    try { p = await api("/api/projet?" + new URLSearchParams({ nom })); }
+    catch (err) { $("#page-projet").innerHTML = `<p class="vide">${esc(err.message)}</p>`; return; }
+    projetCourant = p;
+    const enCours = p.synthese_etat === "en_cours";
+    const echec = p.synthese_etat.startsWith("echec") ? p.synthese_etat.replace(/^echec : /, "") : "";
+    const dateSynth = p.date_synthese ? new Date(p.date_synthese).toLocaleString("fr-FR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "";
+    $("#page-projet").innerHTML = `
+      <a class="retour" href="#projets">${icone("i-chevron", 11)}Projets</a>
+      <div class="projet-tete">
+        <div><h1>${esc(p.nom)}</h1><p class="intro" style="margin:4px 0 0">${esc(p.description || "Sans description")} · ${pluriel(p.comptes_rendus.length, "compte rendu").replace("comptes rendu", "comptes rendus")}</p></div>
+        <div class="actions">
+          ${p.modifiable ? '<button class="bouton" id="modifier-projet">Modifier</button>' : ""}
+          <button class="bouton principal" id="faire-synthese" ${enCours || !p.comptes_rendus.length ? "disabled" : ""}>${enCours ? '<span class="chargement"></span> Claude fait le point…' : (p.synthese ? "Mettre à jour le point" : "Où on en est ?")}</button>
+        </div>
+      </div>
+
+      <p class="titre-groupe">Où on en est</p>
+      ${p.synthese
+        ? `<div class="groupe synthese selectionnable"><div class="md">${markdown(p.synthese)}</div></div>
+           <div class="synthese-pied"><span>Point fait le ${esc(dateSynth)}${p.synthese_perimee ? " · de nouveaux appels sont arrivés depuis" : ""}</span><button class="lien" id="copier-synthese">Copier pour Claude</button></div>`
+        : `<div class="groupe synthese vide">${enCours ? "Claude relit tous les comptes rendus du projet…" : (echec ? "Échec : " + esc(echec) : "Clique sur « Où on en est ? » : Claude relit tous les appels du projet et fait le point.")}</div>`}
+
+      <p class="titre-groupe">Actions à faire</p>
+      <div class="groupe">${p.actions.length ? p.actions.map((a) => `
+        <div class="rang action-ligne"><div class="corps"><div>${esc(a.texte)}</div><div class="d">${esc(a.titre)} · ${esc(new Date(a.date).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }))}</div></div></div>`).join("")
+        : '<div class="rang"><div class="corps second">Aucune action relevée pour l\'instant.</div></div>'}</div>
+
+      <p class="titre-groupe">Comptes rendus</p>
+      <div class="groupe">${p.comptes_rendus.length ? p.comptes_rendus.map((c, i) => `
+        <div class="rang cliquable" data-cr="${i}" role="button" tabindex="0">
+          <div class="corps"><div>${esc(c.titre)}</div><div class="d">${esc(dateLongue(c.date))}</div></div>
+          <span class="chevron">${icone("i-chevron", 12)}</span>
+        </div>`).join("") : '<div class="rang"><div class="corps second">Aucun compte rendu dans ce projet.</div></div>'}</div>`;
+
+    $("#modifier-projet")?.addEventListener("click", () => ouvrirFeuille(p));
+    $("#faire-synthese").addEventListener("click", async () => {
+      try { await api("/api/projets/synthese", { nom: p.nom }); chargerPageProjet(p.nom); }
+      catch (err) { message(err.message); }
+    });
+    $("#copier-synthese")?.addEventListener("click", async () => {
+      const bloc = `<point_projet nom="${p.nom}" date="${dateSynth}">\n${p.synthese.trim()}\n</point_projet>`;
+      try { await navigator.clipboard.writeText(bloc); message("Point d'étape copié : colle-le dans Claude."); } catch (_) { message("Copie impossible."); }
+    });
+    document.querySelectorAll("[data-cr]").forEach((r) => r.addEventListener("click", async () => {
+      const c = p.comptes_rendus[+r.dataset.cr];
+      filtreProjet = ""; selection = c; location.hash = "#comptes-rendus";
+    }));
+    // Pendant la synthèse, on rafraîchit la page toutes les 3 secondes
+    clearTimeout(suiviSynthese);
+    if (enCours) suiviSynthese = setTimeout(() => { if (!$("#vue-projet").hidden) chargerPageProjet(p.nom); }, 3000);
+  }
   $("#p-annuler").addEventListener("click", () => $("#feuille-projet").close());
 
   $("#form-projet").addEventListener("submit", async (ev) => {
@@ -758,6 +931,7 @@
       $("#feuille-projet").close();
       rendreProjets();
       chargerRaccourcis();
+      if (projetEdite && !$("#vue-projet").hidden) location.hash = "#projet/" + encodeURIComponent(nom.trim());
       message(projetEdite ? "Projet enregistré." : "Projet créé.");
     } catch (err) { message(err.message); }
   });

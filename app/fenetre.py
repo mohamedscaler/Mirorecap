@@ -41,5 +41,21 @@ def apres_demarrage():
 
 
 identite_macos()
-webview.create_window("MiroRecap", url, width=1100, height=720, min_size=(880, 580))
+# Liquid Glass : la fenêtre laisse voir le bureau flouté derrière (vibrancy macOS),
+# l'interface pose ses panneaux de verre par-dessus.
+def couleur_fond():
+    try:
+        from AppKit import NSApplication
+        sombre = "Dark" in str(NSApplication.sharedApplication().effectiveAppearance().name())
+        return "#1C1C1F" if sombre else "#ECECF1"
+    except Exception:
+        return "#ECECF1"
+
+
+options = dict(width=1100, height=720, min_size=(880, 580), background_color=couleur_fond())
+try:
+    webview.create_window("MiroRecap", url, vibrancy=True, **options)
+except TypeError:
+    # Ancienne version de pywebview sans vibrancy : fenêtre normale
+    webview.create_window("MiroRecap", url, **options)
 webview.start(apres_demarrage)

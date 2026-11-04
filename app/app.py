@@ -433,7 +433,19 @@ Rédige le compte rendu en markdown, en français, sans titre principal, avec ce
 ## Mail de suivi
 (court, vouvoiement)
 
-N'invente rien : si une info est incertaine ou mal transcrite, signale-le."""
+N'invente rien : si une info est incertaine ou mal transcrite, signale-le.
+
+Rédige aussi un bloc « contexte_claude » : la mémoire de cet appel destinée à être collée plus tard dans une conversation avec Claude. Il doit être dense, factuel, sans phrases de politesse ni mise en forme markdown, et tenir en 250 mots maximum. Utilise exactement ces balises, et omets celles qui seraient vides :
+<appel date="JJ/MM/AAAA HH:MM" projet="nom du projet">
+<interlocuteurs>noms, rôles, entreprises</interlocuteurs>
+<objet>le sujet de l'appel en une phrase</objet>
+<faits>- faits et besoins exprimés</faits>
+<decisions>- décisions prises</decisions>
+<actions>- qui : quoi (échéance)</actions>
+<chiffres>- budgets, prix, quantités, délais</chiffres>
+<questions_ouvertes>- ce qui reste à trancher ou à vérifier</questions_ouvertes>
+<citations>- phrases exactes importantes, entre guillemets</citations>
+</appel>"""
 
 
 def analyser(transcription, date):
@@ -477,7 +489,7 @@ def analyser_abonnement(systeme, contenu):
         systeme
         + "\n\nRéponds UNIQUEMENT par un objet JSON valide, sans texte avant ni après, de la forme :\n"
         + '{"projet": "<nom exact d\'un des projets listés>", "titre": "<titre court, 3 à 8 mots>", '
-        + '"compte_rendu": "<compte rendu en markdown>"}\n\n'
+        + '"compte_rendu": "<compte rendu en markdown>", "contexte_claude": "<bloc <appel>…</appel>>"}\n\n'
         + contenu
     )
     # Dossier vide : Claude Code n'a aucun fichier à lire, il se contente de répondre
@@ -529,8 +541,9 @@ def analyser_api(systeme, contenu, noms):
                 "projet": {"type": "string", "enum": noms},
                 "titre": {"type": "string", "description": "Titre court et précis, 3 à 8 mots"},
                 "compte_rendu": {"type": "string", "description": "Compte rendu en markdown"},
+                "contexte_claude": {"type": "string", "description": "Bloc <appel>…</appel> dense, à coller dans Claude"},
             },
-            "required": ["projet", "titre", "compte_rendu"],
+            "required": ["projet", "titre", "compte_rendu", "contexte_claude"],
         },
     }
     client = anthropic.Anthropic(api_key=CONFIG["cle_api_anthropic"])
@@ -564,7 +577,8 @@ def ranger(chemin_audio, date, transcription, analyse):
         f"- **Projet** : {analyse['projet']}\n"
         f"- **Audio** : [audio/{audio_final.name}](audio/{audio_final.name})\n\n"
         f"{analyse['compte_rendu'].strip()}\n\n"
-        f"---\n\n## Transcription complète\n\n{transcription}\n",
+        + (f"## Contexte pour Claude\n\n```xml\n{analyse['contexte_claude'].strip()}\n```\n\n" if analyse.get("contexte_claude") else "")
+        + f"---\n\n## Transcription complète\n\n{transcription}\n",
         encoding="utf-8",
     )
     return md
@@ -584,6 +598,8 @@ def liste_comptes_rendus():
         if not d.is_dir() or d.name.startswith(("_", ".")):
             continue
         for md in d.glob("*.md"):
+            if md.name.startswith("_"):
+                continue
             premiere = md.read_text(encoding="utf-8").split("\n", 1)[0]
             titre = premiere[2:].strip() if premiere.startswith("# ") else md.stem
             m = MOTIF_DATE.match(md.name)
@@ -605,14 +621,146 @@ def lire_compte_rendu(projet, fichier):
     return {"markdown": chemin.read_text(encoding="utf-8")}
 
 
+def compter_cr(dossier):
+    return sum(1 for f in dossier.glob("*.md") if not f.name.startswith("_"))
+
+
+def section_markdown(texte, titre):
+    """Contenu d'une section « ## titre » (jusqu'à la section suivante ou au ---)."""
+    m = re.search(rf"^##\s+{re.escape(titre)}\s*$(.*?)(?=^##\s|^---\s*$|\Z)", texte, re.M | re.S)
+    return m.group(1).strip() if m else ""
+
+
+def appeler_claude_texte(systeme, contenu):
+    """Demande une réponse texte à Claude (abonnement ou clé API)."""
+    import tempfile
+
+    moteur = moteur_effectif()
+    if moteur == "abonnement":
+        with tempfile.TemporaryDirectory() as dossier_vide:
+            r = subprocess.run(
+                [trouver_claude_code(), "-p", "Suis les instructions reçues en entrée.",
+                 "--output-format", "json", "--model", CONFIG.get("modele_abonnement", "sonnet"), "--max-turns", "1"],
+                input=systeme + "\n\n" + contenu, capture_output=True, text=True, timeout=900,
+                cwd=dossier_vide, env=env_claude_code(),
+            )
+        try:
+            enveloppe = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            raise RuntimeError(f"Claude Code : {(r.stderr.strip().splitlines() or ['erreur'])[-1]}")
+        if enveloppe.get("is_error"):
+            raise RuntimeError(f"Claude Code : {enveloppe.get('result') or 'erreur'}")
+        return enveloppe.get("result", "")
+    if moteur == "api":
+        import anthropic
+        client = anthropic.Anthropic(api_key=CONFIG["cle_api_anthropic"])
+        reponse = client.messages.create(model=CONFIG["modele_claude"], max_tokens=4096, system=systeme,
+                                         messages=[{"role": "user", "content": contenu}])
+        return "".join(b.text for b in reponse.content if b.type == "text")
+    raise RuntimeError("aucun moteur d'analyse prêt (Réglages → Analyse par Claude)")
+
+
+SYNTHESES = {}   # état des synthèses en cours, par projet
+
+
+def lancer_synthese(nom):
+    """« Où on en est » : Claude relit tous les comptes rendus du projet et fait le point."""
+    dossier = dossier_projet(nom)
+    if SYNTHESES.get(nom) == "en_cours":
+        return
+
+    def tache():
+        SYNTHESES[nom] = "en_cours"
+        try:
+            fichiers = sorted(f for f in dossier.glob("*.md") if not f.name.startswith("_"))
+            if not fichiers:
+                raise RuntimeError("aucun compte rendu dans ce projet")
+            morceaux = []
+            for f in fichiers:
+                texte = f.read_text(encoding="utf-8").split("\n---\n")[0]   # sans la transcription
+                morceaux.append(f"=== {f.stem} ===\n{texte}")
+            contenu = "\n\n".join(morceaux)[-120000:]   # les plus récents en priorité si c'est très long
+            desc = lister_projets().get(nom, "")
+            systeme = f"""Tu fais le point sur un projet à partir de tous ses comptes rendus d'appels, du plus ancien au plus récent. Projet : {nom}{f" ({desc})" if desc else ""}.
+Rédige en français, en markdown, sans titre principal, avec ces sections (omets celles qui seraient vides) :
+## Où on en est
+(trois phrases maximum : la situation actuelle)
+## Décisions prises
+## Actions en cours
+(qui : quoi (échéance) ; si un appel plus récent montre qu'une action est faite, ne la liste pas)
+## Chiffres clés
+## Prochaines étapes
+## Points à clarifier
+Quand deux appels se contredisent, garde le plus récent et signale le changement. N'invente rien."""
+            synthese = appeler_claude_texte(systeme, contenu).strip()
+            (dossier / "_synthese.md").write_text(
+                f"<!-- {dt.datetime.now():%Y-%m-%dT%H:%M} · {len(fichiers)} comptes rendus -->\n{synthese}\n", encoding="utf-8")
+            SYNTHESES[nom] = "ok"
+            notifier(f"Point d'étape prêt : {nom}", "La synthèse du projet est à jour.")
+        except Exception as e:
+            print(f"Synthèse {nom} : {e}", flush=True)
+            SYNTHESES[nom] = f"echec : {e}"
+
+    threading.Thread(target=tache, daemon=True).start()
+
+
+def lire_projet(nom):
+    """Tout ce qu'il faut pour la page d'un projet."""
+    dossier = dossier_projet(nom)
+    cr = [c for c in liste_comptes_rendus() if c["projet"] == nom]
+    actions = []
+    for c in cr:
+        texte = (dossier / c["fichier"]).read_text(encoding="utf-8")
+        for ligne in section_markdown(texte, "Actions à faire").splitlines():
+            ligne = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", ligne).strip()
+            if ligne and not ligne.startswith("("):
+                actions.append({"texte": ligne, "titre": c["titre"], "fichier": c["fichier"], "date": c["date"]})
+    synthese, date_synthese = "", ""
+    fichier_synthese = dossier / "_synthese.md"
+    if fichier_synthese.exists():
+        brut = fichier_synthese.read_text(encoding="utf-8")
+        m = re.match(r"<!-- (\S+) · (\d+) comptes rendus -->\n", brut)
+        date_synthese = m.group(1) if m else ""
+        synthese = brut[m.end():] if m else brut
+    desc = "Ce qui ne correspond à aucun projet." if nom == PROJET_PAR_DEFAUT else lister_projets().get(nom, "")
+    return {
+        "nom": nom, "description": desc, "modifiable": nom != PROJET_PAR_DEFAUT,
+        "comptes_rendus": cr, "actions": actions[:40],
+        "synthese": synthese, "date_synthese": date_synthese,
+        "synthese_etat": SYNTHESES.get(nom, ""),
+        "synthese_perimee": bool(synthese) and bool(cr) and cr[0]["date"] > date_synthese,
+    }
+
+
+def deplacer_compte_rendu(projet, fichier, vers):
+    """Change un compte rendu de projet (avec son audio)."""
+    if not fichier.endswith(".md") or "/" in fichier or fichier.startswith("_"):
+        raise ValueError("fichier invalide")
+    source = dossier_projet(projet) / fichier
+    cible_dossier = dossier_projet(vers)
+    texte = source.read_text(encoding="utf-8")
+    m = re.search(r"\(audio/([^)]+)\)", texte)
+    if m and (source.parent / "audio" / m.group(1)).exists():
+        (cible_dossier / "audio").mkdir(exist_ok=True)
+        audio_cible = chemin_libre(cible_dossier / "audio" / m.group(1))
+        shutil.move(str(source.parent / "audio" / m.group(1)), str(audio_cible))
+        texte = texte.replace(f"audio/{m.group(1)}", f"audio/{audio_cible.name}")
+    texte = re.sub(r"^- \*\*Projet\*\* : .*$", f"- **Projet** : {vers}", texte, count=1, flags=re.M)
+    texte = re.sub(r'(<appel[^>]*projet=")[^"]*(")', rf"\g<1>{vers}\g<2>", texte, count=1)
+    cible = chemin_libre(cible_dossier / fichier)
+    cible.write_text(texte, encoding="utf-8")
+    source.unlink()
+    return {"projet": vers, "fichier": cible.name}
+
+
 def liste_projets_detaillee():
     resultat = []
     for nom, desc in lister_projets().items():
-        resultat.append({"nom": nom, "description": desc, "nb": len(list((DOSSIER_SORTIE / nom).glob("*.md"))), "modifiable": True})
+        resultat.append({"nom": nom, "description": desc, "nb": compter_cr(DOSSIER_SORTIE / nom), "modifiable": True})
     resultat.append({
         "nom": PROJET_PAR_DEFAUT,
         "description": "Ce qui ne correspond à aucun projet.",
-        "nb": len(list((DOSSIER_SORTIE / PROJET_PAR_DEFAUT).glob("*.md"))),
+        "nb": compter_cr(DOSSIER_SORTIE / PROJET_PAR_DEFAUT),
         "modifiable": False,
     })
     return resultat
@@ -728,6 +876,7 @@ class Api(http.server.BaseHTTPRequestHandler):
                 "/api/comptes-rendus": liste_comptes_rendus,
                 "/api/compte-rendu": lambda: lire_compte_rendu(q.get("projet", ""), q.get("fichier", "")),
                 "/api/projets": liste_projets_detaillee,
+                "/api/projet": lambda: lire_projet(q.get("nom", "")),
                 "/api/reglages": lire_reglages,
             }
             if url.path not in routes:
@@ -747,6 +896,11 @@ class Api(http.server.BaseHTTPRequestHandler):
             if self.path == "/api/projets":
                 creer_projet(d.get("nom", ""), d.get("description", ""))
                 return self._json(200, liste_projets_detaillee())
+            if self.path == "/api/projets/synthese":
+                lancer_synthese(d.get("nom", ""))
+                return self._json(200, {"ok": True})
+            if self.path == "/api/deplacer":
+                return self._json(200, deplacer_compte_rendu(d.get("projet", ""), d.get("fichier", ""), d.get("vers", "")))
             if self.path == "/api/projets/modifier":
                 modifier_projet(d.get("ancien", ""), d.get("nom", ""), d.get("description", ""))
                 return self._json(200, liste_projets_detaillee())
