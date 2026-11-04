@@ -85,6 +85,7 @@ def charger_config():
 def sauver_config(config):
     DOSSIER_APP.mkdir(parents=True, exist_ok=True)
     FICHIER_CONFIG.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+    FICHIER_CONFIG.chmod(0o600)  # clé API et jeton : lisibles par toi seul
 
 
 CONFIG = charger_config()
@@ -991,6 +992,12 @@ class App(rumps.App):
         Api.app = self
         self.serveur = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Api)
         threading.Thread(target=self.serveur.serve_forever, daemon=True).start()
+
+        # Enregistrements interrompus (app quittée ou mise à jour pendant un traitement) :
+        # on les remet en traitement au lieu de les laisser bloqués dans _En-cours
+        for f in DOSSIER_ENREG.iterdir():
+            if f.suffix.lower() in EXTENSIONS_AUDIO and f.stat().st_size > 1024:
+                shutil.move(str(f), str(chemin_libre(DOSSIER_IMPORT / f.name)))
 
         threading.Thread(target=self.travailleur, daemon=True).start()
         threading.Thread(target=self.boucle_maj, daemon=True).start()
