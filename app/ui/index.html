@@ -289,7 +289,7 @@
   .ac-etapes { display: flex; gap: 6px; justify-content: center; }
   .ac-etapes span { width: 22px; height: 4px; border-radius: 2px; background: rgba(128,128,128,.3); transition: background .2s; }
   .ac-etapes span.fait { background: var(--bleu); }
-  #accueil .point.non { background: var(--rouge); }
+  .point.non { background: var(--rouge); }
   .rang.colonne { flex-direction: column; align-items: stretch; gap: 6px; }
   .rang.colonne label { font-weight: 500; font-size: 12px; }
   .contexte textarea, #accueil textarea { width: 100%; resize: vertical; font: inherit; color: inherit; background: var(--champ, rgba(128,128,128,.12)); border: 1px solid var(--separateur, rgba(128,128,128,.25)); border-radius: 8px; padding: 8px 10px; box-sizing: border-box; }
@@ -623,6 +623,16 @@
             <div class="corps"><div>Son de l'ordinateur</div><div id="son-systeme-etat" class="d">Capte aussi la voix de tes interlocuteurs en visio</div></div>
             <span class="interrupteur" aria-hidden="true"></span>
           </div>
+        </div>
+
+        <p class="titre-groupe">Tester l'enregistrement</p>
+        <div class="groupe">
+          <div class="rang"><span id="rg-micro-point" class="point"></span>
+            <div class="corps"><div>Micro</div><div class="d" id="rg-micro-etat">Enregistre 1,5 s : parle pendant le test</div></div>
+            <button class="bouton" type="button" id="rg-micro">Tester</button></div>
+          <div class="rang"><span id="rg-son-point" class="point"></span>
+            <div class="corps"><div>Son du Mac</div><div class="d" id="rg-son-etat">Joue un son et vérifie qu'il est capté (voix des interlocuteurs en visio)</div></div>
+            <button class="bouton" type="button" id="rg-son">Tester</button></div>
         </div>
         <p class="titre-groupe">Quand un appel commence</p>
         <div id="detection" class="groupe" role="radiogroup" aria-label="Détection des appels"></div>
@@ -1672,6 +1682,8 @@
     } catch (err) { $(etat).textContent = err.message; }
     bouton.disabled = false; bouton.textContent = "Retester";
   }
+  $("#rg-micro").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-micro", "#rg-micro-point", "#rg-micro-etat", "Écoute… parle maintenant"));
+  $("#rg-son").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-son", "#rg-son-point", "#rg-son-etat", "Test en cours, un son va être joué…"));
   $("#ac-micro").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-micro", "#ac-micro-point", "#ac-micro-etat", "Écoute… parle maintenant"));
   $("#ac-son").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-son", "#ac-son-point", "#ac-son-etat", "Test en cours, un son va être joué…"));
 
