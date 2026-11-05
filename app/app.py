@@ -2541,6 +2541,12 @@ class App(rumps.App):
         self.fenetre_demandee = False
         signal.signal(signal.SIGUSR1, lambda *_: setattr(self, "fenetre_demandee", True))
 
+        def sigterm(*_):
+            # Le lanceur natif envoie SIGTERM à la fermeture (Quitter du Dock, extinction du Mac…)
+            self.arreter_processus_fils()
+            os._exit(0)
+        signal.signal(signal.SIGTERM, sigterm)
+
         # Premier lancement (rien de configuré) : choix du modèle puis réglages ; ouverture par l'utilisateur : fenêtre
         if not CONFIG.get("accueil_fait") or moteur_effectif() is None:
             self.ouvrir_fenetre("reglages")
@@ -2892,9 +2898,28 @@ class App(rumps.App):
         threading.Thread(target=fermer, daemon=True).start()
         return {"quitte": True}
 
+    def arreter_processus_fils(self):
+        """Ferme la fenêtre et l'outil de capture du son du Mac : sans ça ils restent orphelins."""
+        for proc in (self.fenetre, getattr(self.enreg, "_capture", None)):
+            try:
+                if proc and proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
     def quitter(self, _):
-        if self.fenetre and self.fenetre.poll() is None:
-            self.fenetre.terminate()
+        self.arreter_processus_fils()
+
+        def filet():
+            # rumps.quit_application() peut rester bloqué (threads natifs MLX/Whisper en cours) :
+            # si l'arrêt normal n'a pas abouti au bout de 3 s, on force.
+            time.sleep(3)
+            os._exit(0)
+        threading.Thread(target=filet, daemon=True).start()
         rumps.quit_application()
 
     # --- Import automatique --------------------------------------------------
