@@ -764,7 +764,6 @@
   .bouton-panneau {
     position: fixed; top: 11px; z-index: 50; width: 28px; height: 28px; border-radius: 8px;
     display: grid; place-items: center; color: var(--second);
-    -webkit-app-region: no-drag;
   }
   .bouton-panneau:hover { background: var(--survol); color: var(--texte); }
   .bouton-panneau[aria-pressed="true"] { color: var(--bleu); }
@@ -1664,6 +1663,15 @@
   // Dans la fenêtre de l'app (barre de titre intégrée) : on laisse la place aux feux tricolores
   const marquerFenetre = () => document.body.classList.add("fenetre-mac");
   if (window.pywebview) marquerFenetre(); else window.addEventListener("pywebviewready", marquerFenetre);
+  // La vue web recouvre la barre de titre : la bande du haut déplace la fenêtre (double-clic : agrandir)
+  const dansBandeHaut = (ev) => document.body.classList.contains("fenetre-mac") && ev.button === 0 && ev.clientY < 46
+    && !ev.target.closest("button, a, input, select, textarea, [role=separator], dialog");
+  document.addEventListener("mousedown", (ev) => {
+    if (dansBandeHaut(ev) && ev.detail === 1 && window.pywebview?.api?.deplacer) window.pywebview.api.deplacer();
+  });
+  document.addEventListener("dblclick", (ev) => {
+    if (dansBandeHaut(ev) && window.pywebview?.api?.agrandir) window.pywebview.api.agrandir();
+  });
 
   // Panneaux : barre latérale et liste repliables, largeurs réglables (mémorisées)
   window.panneaux = (() => {

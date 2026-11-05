@@ -163,12 +163,47 @@ def signaler_fermeture():
         pass   # l'app est déjà en train de quitter ou de redémarrer
 
 
+class Api:
+    """Appelée par l'interface : la vue web recouvre la barre de titre, donc la bande du haut
+    ne déplaçait plus la fenêtre. Un clic dans cette bande demande ici le déplacement natif."""
+
+    def deplacer(self):
+        try:
+            from AppKit import NSApplication
+            from PyObjCTools import AppHelper
+
+            def faire():
+                app = NSApplication.sharedApplication()
+                evenement = app.currentEvent()
+                fen = app.keyWindow() or (app.windows()[0] if app.windows() else None)
+                if evenement is not None and fen is not None:
+                    fen.performWindowDragWithEvent_(evenement)
+            AppHelper.callAfter(faire)
+        except Exception as e:
+            print(f"Déplacement : {e}", flush=True)
+
+    def agrandir(self):
+        """Double-clic dans la bande du haut : agrandir / restaurer, comme toute fenêtre macOS."""
+        try:
+            from AppKit import NSApplication
+            from PyObjCTools import AppHelper
+
+            def faire():
+                app = NSApplication.sharedApplication()
+                fen = app.keyWindow() or (app.windows()[0] if app.windows() else None)
+                if fen is not None:
+                    fen.zoom_(None)
+            AppHelper.callAfter(faire)
+        except Exception as e:
+            print(f"Agrandir : {e}", flush=True)
+
+
 options = dict(width=1100, height=720, min_size=(880, 580), background_color=couleur_fond())
 try:
-    fenetre = webview.create_window("MiroRecap", url, vibrancy=True, **options)
+    fenetre = webview.create_window("MiroRecap", url, vibrancy=True, js_api=Api(), **options)
 except TypeError:
     # Ancienne version de pywebview sans vibrancy : fenêtre normale
-    fenetre = webview.create_window("MiroRecap", url, **options)
+    fenetre = webview.create_window("MiroRecap", url, js_api=Api(), **options)
 try:
     fenetre.events.closed += signaler_fermeture
 except Exception as e:
