@@ -101,6 +101,8 @@ CONFIG_DEFAUT = {
     "son_systeme": True,
     # Installe les mises à jour toute seule dès qu'elles sortent (quand l'app ne fait rien)
     "maj_auto": True,
+    # Fermer la fenêtre (bouton rouge) quitte aussi l'app, au lieu de la laisser dans la barre des menus
+    "quitter_a_la_fermeture": True,
 }
 
 
@@ -298,18 +300,24 @@ class Enregistreur:
         self.chemin = chemin_libre(DOSSIER_ENREG / f"{dt.datetime.now():%Y-%m-%d_%Hh%M}.wav")
         fichier = sf.SoundFile(self.chemin, mode="w", samplerate=frequence, channels=1, subtype="PCM_16")
 
+        # File et signal d'arrêt propres à CET enregistrement : un nouvel enregistrement lancé
+        # pendant que le précédent finit d'écrire ne les partage pas
+        file_attente = queue.Queue()
+        arret = threading.Event()
+
         def ecrire():
             with fichier:
                 # Continue tant qu'on enregistre OU qu'il reste des blocs à écrire
-                while self.actif or not self._file.empty():
+                while not arret.is_set() or not file_attente.empty():
                     try:
-                        fichier.write(self._file.get(timeout=0.5))
+                        fichier.write(file_attente.get(timeout=0.5))
                     except queue.Empty:
                         pass
 
         def callback(indata, frames, time, status):
-            self._file.put(indata.copy())
+            file_attente.put(indata.copy())
 
+        self._arret = arret
         self.actif = True
         self.debut = dt.datetime.now()
         self._ecrivain = threading.Thread(target=ecrire, daemon=True)
@@ -341,6 +349,8 @@ class Enregistreur:
             except subprocess.TimeoutExpired:
                 SON_SYSTEME.update(etat="ok", message="")
                 return
+            if code == 0:
+                return   # arrêt normal demandé par nous (enregistrement très court), pas un refus
             erreur = (capture.stderr.read() or "").strip()
             print(f"capture-systeme ({code}) : {erreur}", flush=True)
             deja_refusee = SON_SYSTEME["etat"] == "refusee"
@@ -353,18 +363,33 @@ class Enregistreur:
         threading.Thread(target=surveiller, daemon=True).start()
 
     def arreter(self):
-        self._flux.stop()
-        self._flux.close()
-        self.actif = False
-        if self._capture and self._capture.poll() is None:
-            self._capture.terminate()   # SIGTERM : l'outil finalise son fichier WAV
-            try:
-                self._capture.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._capture.kill()
-        self._ecrivain.join()  # attend que tout soit bien écrit
-        systeme = self.systeme if self.systeme and self.systeme.exists() else None
-        return self.chemin, self.debut, systeme
+        # Chaque étape est protégée : une erreur (casque débranché, micro changé en cours de route)
+        # ne doit jamais laisser l'enregistrement bloqué « en cours » sans moyen de l'arrêter
+        try:
+            for etape in (self._flux.stop, self._flux.close):
+                try:
+                    etape()
+                except Exception as e:
+                    print(f"Arrêt du micro : {e}", flush=True)
+        finally:
+            self.actif = False
+            self._arret.set()
+        capture, ecrivain, systeme = self._capture, self._ecrivain, self.systeme
+
+        def finaliser():
+            """Partie lente de l'arrêt (fermeture de la capture du son, fin d'écriture),
+            faite dans le thread de traitement pour que le bouton réponde tout de suite.
+            Retourne la piste « son du Mac », ou None."""
+            if capture and capture.poll() is None:
+                capture.terminate()   # SIGTERM : l'outil finalise son fichier WAV
+                try:
+                    capture.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    capture.kill()
+            ecrivain.join(timeout=30)  # attend que tout soit bien écrit
+            return systeme if systeme and systeme.exists() else None
+
+        return self.chemin, self.debut, finaliser
 
 
 def tester_micro():
@@ -2141,6 +2166,7 @@ def lire_reglages():
         "connexion": CONNEXION,
         "son_systeme": CONFIG.get("son_systeme", True),
         "maj_auto": CONFIG.get("maj_auto", True),
+        "quitter_a_la_fermeture": bool(CONFIG.get("quitter_a_la_fermeture", True)),
         "conservation_audio": int(CONFIG.get("conservation_audio") or 0),
         "chatgpt_connecte": bool(CONFIG.get("chatgpt_connecte")),
         "codex": bool(trouver_codex()),
@@ -2186,6 +2212,8 @@ def sauver_reglages(donnees):
         threading.Thread(target=nettoyer_audios, daemon=True).start()
     if isinstance(donnees.get("maj_auto"), bool):
         CONFIG["maj_auto"] = donnees["maj_auto"]
+    if isinstance(donnees.get("quitter_a_la_fermeture"), bool):
+        CONFIG["quitter_a_la_fermeture"] = donnees["quitter_a_la_fermeture"]
     if isinstance(donnees.get("son_systeme"), bool):
         CONFIG["son_systeme"] = donnees["son_systeme"]
     if "dossier_sortie" in donnees and donnees["dossier_sortie"].strip() != CONFIG.get("dossier_sortie", ""):
@@ -2232,13 +2260,15 @@ class Api(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urllib.parse.urlparse(self.path)
-        page = url.path in ("/", "/index.html")
+        page = url.path in ("/", "/index.html", "/icone.png")   # servis sans jeton (rien de sensible)
         if not self._autorise(page):
             return self._json(403, {"erreur": "accès refusé"})
         q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
         try:
+            if url.path == "/icone.png" and (DOSSIER_CODE / "icone.png").exists():
+                return self._envoyer(200, (DOSSIER_CODE / "icone.png").read_bytes(), "image/png")
             if page:
-                html = (DOSSIER_CODE / "ui" / "index.html").read_text(encoding="utf-8").replace("__JETON__", JETON)
+                html =(DOSSIER_CODE / "ui" / "index.html").read_text(encoding="utf-8").replace("__JETON__", JETON)
                 return self._envoyer(200, html.encode(), "text/html; charset=utf-8")
             routes = {
                 "/api/etat": lambda: self.app.etat(),
@@ -2299,6 +2329,12 @@ class Api(http.server.BaseHTTPRequestHandler):
                 return self._json(200, lire_reglages())
             if self.path == "/api/quitter":
                 return self._json(200, self.app.quitter_depuis_fenetre())
+            if self.path == "/api/fenetre-fermee":
+                # Bouton rouge : on quitte aussi l'app si le réglage est activé
+                # (quitter_depuis_fenetre refuse tant qu'un enregistrement ou une analyse tourne)
+                if CONFIG.get("quitter_a_la_fermeture"):
+                    return self._json(200, self.app.quitter_depuis_fenetre())
+                return self._json(200, {"quitte": False})
             if self.path == "/api/supprimer":
                 if isinstance(d.get("elements"), list):   # sélection multiple
                     faits, erreurs = 0, []
@@ -2360,6 +2396,11 @@ class Api(http.server.BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True})
             self._json(404, {"erreur": "introuvable"})
         except Exception as e:
+            if self.path == "/api/enregistrement":
+                import traceback
+                print(f"[{dt.datetime.now():%H:%M:%S}] Enregistrement :", flush=True)
+                traceback.print_exc()
+                sys.stdout.flush()
             self._json(400, {"erreur": str(e)})
 
 
@@ -2427,7 +2468,7 @@ class App(rumps.App):
         # Pistes « son système » d'un enregistrement interrompu : inutilisables seules
         if DOSSIER_CAPTURE.exists():
             shutil.rmtree(DOSSIER_CAPTURE, ignore_errors=True)
-        self.pistes_systeme = {}         # piste micro → piste son système à mélanger
+        self.finalisations = {}          # piste micro → fin d'arrêt (capture du son système) à faire avant traitement
 
         threading.Thread(target=self.travailleur, daemon=True).start()
         threading.Thread(target=self.boucle_maj, daemon=True).start()
@@ -2489,6 +2530,7 @@ class App(rumps.App):
             "erreurs": compter_erreurs(),
             "cle_ok": moteur_effectif() is not None,
             "moteur": moteur_effectif(),
+            "mcp": mcp_installe(),
             "dernier": self.dernier,
             "version": VERSION,
             "maj": self.maj,
@@ -2728,15 +2770,20 @@ class App(rumps.App):
         os._exit(0)   # le lanceur natif s'arrête avec nous
 
     def basculer_enregistrement(self):
-        with self.verrou:
+        # Un arrêt peut durer quelques secondes : un second clic pendant ce temps est ignoré
+        # (sinon il relançait aussitôt un nouvel enregistrement, et l'arrêt semblait sans effet)
+        if not self.verrou.acquire(blocking=False):
+            return
+        try:
             if not self.enreg.actif:
                 self.enreg.demarrer()
             else:
-                chemin, debut, systeme = self.enreg.arreter()
-                if systeme:
-                    self.pistes_systeme[chemin] = systeme
+                chemin, debut, finaliser = self.enreg.arreter()
+                self.finalisations[chemin] = finaliser
                 self.en_file.add(chemin)
                 self.file_traitement.put((chemin, debut))
+        finally:
+            self.verrou.release()
 
     # --- Barre de menus -------------------------------------------------------
 
@@ -2886,7 +2933,10 @@ class App(rumps.App):
                               debut=dt.datetime.now().isoformat(timespec="seconds"),
                               date=date.isoformat(timespec="minutes"))
             try:
-                systeme = self.pistes_systeme.pop(chemin, None)
+                finaliser = self.finalisations.pop(chemin, None)
+                if finaliser:
+                    self.statut = "Finalisation…"
+                systeme = finaliser() if finaliser else None
                 if systeme:
                     self.statut = "Mixage…"
                     try:

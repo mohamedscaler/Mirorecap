@@ -115,6 +115,7 @@
     transition: transform 150ms var(--courbe);
   }
   .rec:active { transform: scale(.92); }
+  .rec:disabled { opacity: .55; }
   .rec-centre {
     width: 44px; height: 44px; border-radius: 50%;
     background: var(--rouge);
@@ -502,6 +503,40 @@
   @keyframes onde { 50% { height: 14px; } }
   .enregistre .chrono { color: var(--rouge); }
 
+  /* Logo et nom de l'app, en haut de la barre latérale (sous les feux tricolores) */
+  .marque { display: flex; align-items: center; gap: 9px; padding: 2px 8px 6px; font: 600 14px/1 var(--police-titre); letter-spacing: -0.01em; }
+  .elt-reglages { flex-shrink: 0; }
+  .elt-ia { margin-top: 6px; flex-shrink: 0; font-size: 12.5px; }
+  .elt-mcp { margin-top: 0; }
+  .logo-ia { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; flex-shrink: 0;
+    background: var(--contenu); box-shadow: inset 0 0 0 1px var(--barre-bord), 0 1px 2px rgba(0, 0, 0, .08); }
+  .logo-ia.claude { color: #D97757; }
+  .logo-ia.gpt { color: var(--texte); }
+  .logo-ia.aucun { color: var(--orange); }
+  .ia-point { width: 7px; height: 7px; border-radius: 50%; background: var(--orange); flex-shrink: 0; margin-right: 2px; }
+  .ia-point.ok { background: var(--vert); box-shadow: 0 0 0 3px color-mix(in srgb, var(--vert) 22%, transparent); }
+  .marque img { width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0; }
+
+  /* Enregistreur : pilule dans l'en-tête de la liste des comptes rendus */
+  .enregistreur-liste { display: flex; align-items: center; gap: 10px; }
+  .rec-pilule {
+    display: inline-flex; align-items: center; gap: 8px; padding: 5px 14px 5px 7px; min-height: 32px;
+    border-radius: 999px; background: var(--capsule); box-shadow: inset 0 0 0 1px var(--capsule-bord);
+    font-weight: 500; transition: background 120ms, transform 150ms var(--courbe);
+  }
+  .rec-pilule:hover { background: color-mix(in srgb, var(--capsule) 100%, var(--texte) 6%); }
+  .rec-pilule:active { transform: scale(.97); }
+  .rec-pilule:disabled { opacity: .55; }
+  .rec-pilule .rec-centre { width: 18px; height: 18px; border-radius: 50%; background: var(--rouge); box-shadow: 0 2px 6px color-mix(in srgb, var(--rouge) 40%, transparent); transition: border-radius 220ms var(--courbe); }
+  .rec-pilule[aria-pressed="true"] .rec-centre { border-radius: 5px; width: 14px; height: 14px; margin: 2px; }
+  .rec-pilule[aria-pressed="true"] { background: color-mix(in srgb, var(--rouge) 12%, transparent); color: var(--rouge); }
+  .rec-pilule .chrono { display: none; font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .enregistre .rec-pilule .chrono { display: inline; color: var(--rouge); }
+  .rec-pilule .onde { display: none; }
+  .enregistre .rec-pilule .onde { display: flex; visibility: visible; height: 12px; }
+  .enregistreur-liste .statut { min-height: 0; text-align: left; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+  .enregistreur-liste.enregistre .statut { display: none; }
+
   /* Boutons : capsules sobres */
   .bouton {
     border-radius: 999px; padding: 4px 12px; min-height: 28px; gap: 6px;
@@ -630,6 +665,88 @@
   .action-ligne .case { width: 17px; height: 17px; accent-color: var(--bleu); flex-shrink: 0; }
   .action-ligne.faite .corps > div:first-child { text-decoration: line-through; color: var(--second); }
 
+  /* =====================================================================
+     Habillage final : plus clair, plus net, accents colorés.
+     ===================================================================== */
+  :root {
+    --contenu: #FFFFFF;
+    --barre-verre: rgba(244, 246, 252, .94);
+    --barre-bord: rgba(30, 40, 80, .07);
+    --carte: #F5F7FB;
+    --capsule: rgba(30, 40, 80, .06);
+    --capsule-bord: rgba(30, 40, 80, .07);
+    --survol: rgba(30, 40, 80, .05);
+    --selection-douce: rgba(0, 122, 255, .11);
+    --second: #6B7080;
+    --tertiaire: #9CA1B0;
+    --separateur: rgba(30, 40, 80, .09);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --contenu: #1A1A1E;
+      --barre-verre: rgba(40, 40, 46, .94);
+      --barre-bord: rgba(255, 255, 255, .08);
+      --carte: #232328;
+      --capsule: rgba(255, 255, 255, .08);
+      --capsule-bord: rgba(255, 255, 255, .08);
+      --survol: rgba(255, 255, 255, .06);
+      --selection-douce: rgba(10, 132, 255, .24);
+      --second: #A0A0AB;
+      --separateur: rgba(255, 255, 255, .09);
+    }
+  }
+  .barre { box-shadow: inset 0 0 0 1px var(--barre-bord), 0 10px 32px rgba(20, 30, 70, .10); }
+
+  /* Logo */
+  .marque { padding: 4px 8px 12px; gap: 10px; font: 700 15px/1 var(--police-titre); letter-spacing: -0.015em; }
+  .marque img { width: 32px; height: 32px; border-radius: 9px; box-shadow: 0 2px 8px rgba(20, 30, 70, .22); }
+
+  /* Navigation : pastilles colorées façon Réglages Système */
+  .barre .pastille { width: 24px; height: 24px; border-radius: 7px; color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 1px 2px rgba(0, 0, 0, .15); }
+  .barre .pastille.bleu { background: linear-gradient(#4DA3FF, #0A6CFF) !important; color: #fff; }
+  .barre .pastille.orange { background: linear-gradient(#FFB340, #FF8A00) !important; color: #fff; }
+  .barre .pastille.gris { background: linear-gradient(#A6A6AD, #7C7C84) !important; color: #fff; }
+  .barre .pastille svg { width: 14px; height: 14px; }
+  .elt { min-height: 34px; padding: 5px 9px; border-radius: 10px; }
+  .elt[aria-current="page"] { background: var(--selection-douce); color: var(--bleu); font-weight: 600; }
+  .elt[aria-current="page"] .compte { color: var(--bleu); }
+  .titre-section { text-transform: uppercase; font-size: 10.5px; letter-spacing: .06em; padding: 18px 10px 6px; }
+
+  /* Liste : sélection douce au lieu d'un bloc bleu plein */
+  .rangee { padding: 10px 12px; }
+  .rangee[aria-current="true"], .rangee[aria-current="true"]:hover { background: var(--selection-douce); color: var(--texte); }
+  .rangee[aria-current="true"] .t { color: var(--bleu); }
+  .rangee[aria-current="true"] .m { color: var(--second); }
+  .en-cours { background: var(--carte); box-shadow: inset 0 0 0 1px var(--separateur); opacity: 1; }
+
+  /* Bouton d'enregistrement : rouge, bien visible */
+  .rec-pilule { padding: 6px 16px 6px 8px; min-height: 34px; font-weight: 600; color: var(--rouge);
+    background: color-mix(in srgb, var(--rouge) 11%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rouge) 28%, transparent); }
+  .rec-pilule:hover { background: color-mix(in srgb, var(--rouge) 18%, transparent); }
+  .rec-pilule[aria-pressed="true"] { background: var(--rouge); color: #fff; box-shadow: 0 4px 14px color-mix(in srgb, var(--rouge) 45%, transparent); }
+  .rec-pilule[aria-pressed="true"] .rec-centre { background: #fff; box-shadow: none; }
+  .enregistre .rec-pilule .chrono { color: #fff; }
+  .rec-pilule .onde span { background: #fff; }
+
+  /* Points de couleur par projet */
+  .pt { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 6px; vertical-align: 0; flex-shrink: 0; }
+  .pt.grand { width: 10px; height: 10px; margin: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent); }
+  .icone-dossier { width: 24px; display: grid; place-items: center; }
+
+  /* Liste : plus d'air et titre plus lisible */
+  .rangee { padding: 11px 12px; gap: 3px; }
+  .rangee .t { font-size: 13.5px; line-height: 1.3; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .rangee .m { display: flex; align-items: center; }
+
+  /* Lecteur : titre et blocs plus aérés */
+  .lecteur-tete h1 { font-size: 30px; }
+  .carte { margin: 26px 0; padding: 6px 20px 16px; border-radius: 18px; background: var(--carte); box-shadow: none; }
+  .md h2 { margin: 30px 0 10px; }
+  .md li { margin-bottom: 6px; }
+
+  /* Boutons principaux : léger dégradé */
+  .bouton.principal { background: linear-gradient(#2E8BFF, #0A6CFF); box-shadow: 0 2px 8px rgba(10, 108, 255, .35), inset 0 1px 0 rgba(255, 255, 255, .25); }
+  .bouton.principal:hover { background: linear-gradient(#2680F0, #095FE0); }
 </style>
 </head>
 <body>
@@ -650,11 +767,15 @@
   <symbol id="i-copier" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" d="M5.5 5.5V3.2c0-.7.5-1.2 1.2-1.2h6.1c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2h-2.3M3.2 5.5h6.1c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3.2c-.7 0-1.2-.5-1.2-1.2V6.7c0-.7.5-1.2 1.2-1.2z"/></symbol>
   <symbol id="i-enveloppe" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" d="M2.5 3.8h11c.6 0 1 .4 1 1v6.4c0 .6-.4 1-1 1h-11c-.6 0-1-.4-1-1V4.8c0-.6.4-1 1-1zM2 4.5l6 4.3 6-4.3"/></symbol>
   <symbol id="i-rappel" viewBox="0 0 16 16"><circle cx="3.6" cy="4.4" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="3.6" cy="11.6" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M7.5 4.4h6.5M7.5 11.6h6.5"/></symbol>
+  <symbol id="i-claude" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" d="M10 8h5M9.4 6.6l2.5-2.5M8 6V1M6.6 6.6 4.1 4.1M6 8H1M6.6 9.4l-2.5 2.5M8 10v5M9.4 9.4l2.5 2.5"/></symbol>
+  <symbol id="i-lien" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6.5 9.5a2.5 2.5 0 0 0 3.5 0l2.5-2.5a2.5 2.5 0 0 0-3.5-3.5l-.8.8"/><path d="M9.5 6.5a2.5 2.5 0 0 0-3.5 0L3.5 9a2.5 2.5 0 0 0 3.5 3.5l.8-.8"/></g></symbol>
+  <symbol id="i-gpt" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.25"><rect x="4.3" y="1.6" width="7.4" height="12.8" rx="3.7"/><rect x="4.3" y="1.6" width="7.4" height="12.8" rx="3.7" transform="rotate(60 8 8)"/><rect x="4.3" y="1.6" width="7.4" height="12.8" rx="3.7" transform="rotate(120 8 8)"/></g></symbol>
   <symbol id="i-micro" viewBox="0 0 16 16"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5"/></symbol>
 </svg>
 
 <!-- ============ Barre latérale ============ -->
 <aside class="barre">
+  <div class="marque"><img src="/icone.png" alt="" width="26" height="26"><span>MiroRecap</span></div>
   <div class="barre-defilement">
     <nav aria-label="Sections">
       <a class="elt" href="#comptes-rendus" data-vue="comptes-rendus">
@@ -665,24 +786,25 @@
         <span class="pastille orange"><svg width="14" height="14"><use href="#i-dossier"/></svg></span>
         <span class="nom">Projets</span>
       </a>
-      <a class="elt" href="#reglages" data-vue="reglages">
-        <span class="pastille gris"><svg width="14" height="14"><use href="#i-reglages"/></svg></span>
-        <span class="nom">Réglages</span>
-      </a>
     </nav>
     <p class="titre-section">Projets</p>
     <div id="raccourcis-projets"></div>
   </div>
+  <a class="elt elt-ia" id="ia-statut" href="#reglages" onclick="window.afficherOngletReglages && afficherOngletReglages('analyse')">
+    <span class="logo-ia" id="ia-logo"></span>
+    <span class="nom" id="ia-nom">…</span>
+    <span class="ia-point" id="ia-point"></span>
+  </a>
+  <a class="elt elt-ia elt-mcp" id="mcp-statut" href="#reglages" onclick="window.afficherOngletReglages && afficherOngletReglages('analyse')">
+    <span class="logo-ia" id="mcp-logo"><svg width="15" height="15"><use href="#i-lien"/></svg></span>
+    <span class="nom" id="mcp-nom">…</span>
+    <span class="ia-point" id="mcp-point"></span>
+  </a>
+  <a class="elt elt-reglages" href="#reglages" data-vue="reglages">
+    <span class="pastille gris"><svg width="14" height="14"><use href="#i-reglages"/></svg></span>
+    <span class="nom">Réglages</span>
+  </a>
 
-  <section id="enregistreur" class="enregistreur" aria-label="Enregistrement">
-    <button id="rec" class="rec" aria-pressed="false" aria-label="Enregistrer"><span class="rec-centre"></span></button>
-    <div class="enr-texte">
-      <div class="enr-ligne"><p id="chrono" class="chrono">00:00</p>
-        <div class="onde" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div></div>
-      <p id="statut" class="statut" aria-live="polite">Prêt à enregistrer</p>
-      <span id="rec-texte" class="rec-libelle" hidden>Enregistrer</span>
-    </div>
-  </section>
 </aside>
 
 <!-- ============ Contenu ============ -->
@@ -720,6 +842,15 @@
     <div class="colonne-liste">
       <div class="entete-liste">
         <div class="ligne"><h1 id="titre-liste">Comptes rendus</h1><span class="droite"><span id="filtre-actif" class="second"></span><button id="mode-selection" class="lien" type="button">Sélectionner</button></span></div>
+        <section id="enregistreur" class="enregistreur-liste" aria-label="Enregistrement">
+          <button id="rec" class="rec-pilule" aria-pressed="false" aria-label="Enregistrer">
+            <span class="rec-centre"></span>
+            <span id="rec-texte">Enregistrer</span>
+            <span id="chrono" class="chrono">00:00</span>
+            <span class="onde" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></span>
+          </button>
+          <p id="statut" class="statut" aria-live="polite">Prêt à enregistrer</p>
+        </section>
         <div class="recherche">
           <svg width="13" height="13"><use href="#i-loupe"/></svg>
           <input id="recherche" class="champ" type="search" placeholder="Rechercher" aria-label="Rechercher">
@@ -922,6 +1053,14 @@
           </div>
         </div>
 
+        <p class="titre-groupe">Fermeture</p>
+        <div class="groupe">
+          <div id="quitter-fermeture" class="rang cliquable" role="switch" tabindex="0" aria-checked="false">
+            <div class="corps"><div>Quitter MiroRecap en fermant la fenêtre</div><div class="d">Sinon l'app reste dans la barre des menus. Elle ne quitte jamais pendant un enregistrement ou une analyse.</div></div>
+            <span class="interrupteur" aria-hidden="true"></span>
+          </div>
+        </div>
+
         <p class="titre-groupe">Mises à jour</p>
         <div class="groupe">
           <div class="rang">
@@ -1057,6 +1196,9 @@
   }
 
   const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  // Une couleur stable par projet (même nom = même teinte) : la liste se lit d'un coup d'œil
+  const teinte = (nom) => { let h = 2166136261; for (const c of String(nom)) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0; return nom === "Divers" ? -1 : h % 360; };
+  const point = (nom, grand = false) => { const h = teinte(nom); return `<i class="pt${grand ? " grand" : ""}" style="${h < 0 ? "--c:#9A9AA3" : `--c:hsl(${h} 62% 55%)`}"></i>`; };
   const icone = (id, t = 14) => `<svg width="${t}" height="${t}"><use href="#${id}"/></svg>`;
   const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 
@@ -1188,9 +1330,10 @@
     listeProjets = projets.map((p) => p.nom);
     const total = projets.reduce((s, p) => s + p.nb, 0);
     $("#nb-total").textContent = total || "";
+    document.querySelector(".titre-section").hidden = !projets.length;   // pas de titre au-dessus de rien
     $("#raccourcis-projets").innerHTML = projets.map((p) => `
       <button class="elt" data-projet="${esc(p.nom)}">
-        <span class="icone-dossier">${icone("i-dossier", 15)}</span>
+        <span class="icone-dossier">${point(p.nom, true)}</span>
         <span class="nom">${esc(p.nom)}</span><span class="compte">${p.nb || ""}</span>
       </button>`).join("");
   }
@@ -1201,7 +1344,7 @@
   });
 
   // ============ Enregistrement + état ============
-  let etat = null, dernierConnu = null;
+  let etat = null, dernierConnu = null, changementEnCours = "";   // changementEnCours : démarrage ou arrêt de l'enregistrement en cours
 
   function rendreEtat(e) {
     etat = e;
@@ -1217,7 +1360,7 @@
     if (e.enregistrement) statut = "Enregistrement…";
     else if (e.statut) statut = e.statut + (e.en_attente ? ` · ${e.en_attente} en attente` : "");
     if (e.erreurs && !e.enregistrement) statut += ` · ${pluriel(e.erreurs, "erreur")}`;
-    $("#statut").textContent = statut;
+    $("#statut").textContent = changementEnCours || statut;
 
     // Premier lancement : choix du modèle
     if (e.accueil && !accueilOuvert) ouvrirAccueil();
@@ -1249,10 +1392,32 @@
 
     $("#alerte").hidden = e.cle_ok;
 
+    // Moteur d'analyse connecté (logo Claude ou ChatGPT, au-dessus de Réglages)
+    const moteurs = { abonnement: ["i-claude", "Claude", "claude"], api: ["i-claude", "Claude (clé API)", "claude"],
+                      chatgpt: ["i-gpt", "ChatGPT", "gpt"], openai: ["i-gpt", "OpenAI (clé API)", "gpt"] };
+    const mo = moteurs[e.moteur];
+    $("#ia-logo").className = "logo-ia " + (mo ? mo[2] : "aucun");
+    $("#ia-logo").innerHTML = icone(mo ? mo[0] : "i-alerte", 15);
+    $("#ia-nom").textContent = mo ? `Analyse · ${mo[1]}` : "Analyse · non connectée";
+    $("#ia-point").className = "ia-point" + (mo ? " ok" : "");
+    $("#ia-statut").title = mo ? `Les comptes rendus sont rédigés avec ${mo[1]} · connecté` : "Aucune IA connectée : clique pour connecter Claude ou ChatGPT";
+    // Connecteur MCP : Claude peut lire tes comptes rendus (autre sens de la connexion)
+    $("#mcp-logo").className = "logo-ia " + (e.mcp ? "claude" : "aucun");
+    $("#mcp-nom").textContent = e.mcp ? "Connecteur · activé" : "Connecteur · non connecté";
+    $("#mcp-point").className = "ia-point" + (e.mcp ? " ok" : "");
+    $("#mcp-statut").title = e.mcp ? "Claude peut lire tes comptes rendus pour avoir le contexte" : "Claude ne peut pas encore lire tes comptes rendus : clique pour activer le connecteur";
+
     // Traitement en cours : ligne grisée + barre en haut
     const tr = e.traitement;
-    $("#en-cours").hidden = !tr;
+    $("#en-cours").hidden = !tr && !e.enregistrement;
     $("#barre-haut").hidden = !tr;
+    if (!tr && e.enregistrement) {
+      // Dès le début de l'enregistrement : la nouvelle conversation apparaît en haut de la liste
+      $("#en-cours .t").textContent = "Nouvel enregistrement";
+      $("#en-cours-etape").textContent = `Enregistrement en cours · ${m}:${s}`;
+      $("#en-cours-barre").classList.add("indetermine");
+      $("#en-cours-barre span").style.width = "";
+    }
     if (tr) {
       const etapes = { preparation: "Préparation de l'audio…", modele: "Téléchargement du modèle de transcription…",
                        transcription: "Transcription", analyse: "Rédaction du compte rendu…",
@@ -1334,10 +1499,18 @@
   setInterval(sonder, 1000);
 
   $("#rec").addEventListener("click", async () => {
+    const bouton = $("#rec");
+    if (bouton.disabled) return;
+    const arret = !!(etat && etat.enregistrement);
+    bouton.disabled = true;
+    changementEnCours = arret ? "Arrêt de l'enregistrement…" : "Démarrage…";
+    $("#statut").textContent = $("#rec-texte").textContent = changementEnCours;
     try {
       rendreEtat(await api("/api/enregistrement", {}));
-      if (!etat.enregistrement) message("Envoyé à l'analyse. Le compte rendu arrive dans quelques minutes.");
-    } catch (err) { message("Micro inaccessible : " + err.message); }
+      if (!arret && etat.enregistrement && location.hash !== "#comptes-rendus") location.hash = "#comptes-rendus";   // montre la nouvelle conversation
+      if (arret && !etat.enregistrement) message("Envoyé à l'analyse. Le compte rendu arrive dans quelques minutes.");
+    } catch (err) { message((arret ? "Arrêt impossible : " : "Micro inaccessible : ") + err.message); }
+    finally { changementEnCours = ""; bouton.disabled = false; }
   });
 
   document.addEventListener("click", (ev) => {
@@ -1376,7 +1549,7 @@
       const coche = modeSelection && selectionMultiple.has(cleCR(c));
       html += `<li><button class="rangee" data-i="${comptesRendus.indexOf(c)}" aria-current="${actif}"${modeSelection ? ` aria-selected="${coche}"` : ""}>
         <span class="t">${esc(c.titre)}</span>
-        <span class="m">${esc(heure(c.date))} · ${esc(c.projet)}</span>
+        <span class="m">${esc(heure(c.date))} · ${point(c.projet)}${esc(c.projet)}</span>
       </button></li>`;
     }
     $("#liste").innerHTML = html;
@@ -1479,7 +1652,7 @@
       <header class="lecteur-tete">
         <h1>${esc(c.titre)}</h1>
         <p class="meta">
-          <label class="etiquette-projet" title="Changer de projet">${icone("i-dossier", 11)}<span>${esc(c.projet)}</span> ▾
+          <label class="etiquette-projet" title="Changer de projet">${point(c.projet)}<span>${esc(c.projet)}</span> ▾
             <select id="deplacer" aria-label="Déplacer vers un autre projet">${listeProjets.map((p) => `<option ${p === c.projet ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
           </label>
           <span>${esc(dateLongue(c.date))}</span>
@@ -1784,6 +1957,7 @@
       </div>`).join("");
     $("#son-systeme").setAttribute("aria-checked", r.son_systeme);
     $("#maj-auto").setAttribute("aria-checked", r.maj_auto);
+    $("#quitter-fermeture").setAttribute("aria-checked", r.quitter_a_la_fermeture);
     if (!r.son_systeme) $("#son-systeme-etat").textContent = "Désactivé · seul ton micro est enregistré";
     $("#dossier-actuel").textContent = r.dossier_actuel;
     $("#dossier").value = r.dossier_personnalise;
@@ -1978,6 +2152,17 @@
       $("#maj-auto").setAttribute("aria-checked", actif);
     } catch (err) { message(err.message); }
   }
+  async function basculerQuitterFermeture() {
+    const actif = $("#quitter-fermeture").getAttribute("aria-checked") !== "true";
+    try {
+      await api("/api/reglages", { quitter_a_la_fermeture: actif });
+      $("#quitter-fermeture").setAttribute("aria-checked", actif);
+    } catch (err) { message(err.message); }
+  }
+  $("#quitter-fermeture").addEventListener("click", basculerQuitterFermeture);
+  $("#quitter-fermeture").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); basculerQuitterFermeture(); }
+  });
   $("#maj-auto").addEventListener("click", basculerMajAuto);
   $("#maj-auto").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); basculerMajAuto(); }
@@ -1999,7 +2184,7 @@
       "Ton contexte": "analyse", "Claude peut lire tes comptes rendus": "analyse",
       "Transcription": "enregistrement", "Enregistrement": "enregistrement",
       "Tester l'enregistrement": "enregistrement", "Quand un appel commence": "enregistrement",
-      "Stockage": "fichiers", "Garder les audios": "fichiers", "Erreurs": "app", "Mises à jour": "app",
+      "Stockage": "fichiers", "Garder les audios": "fichiers", "Erreurs": "app", "Mises à jour": "app", "Fermeture": "app",
     };
     const contenu = document.querySelector("#vue-reglages .contenu");
     let courant = null;

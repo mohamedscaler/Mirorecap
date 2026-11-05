@@ -82,7 +82,9 @@ def intercepter_cmd_q():
             return 1   # NSTerminateNow
 
         objc.classAddMethods(BrowserView.AppDelegate, [
-            objc.selector(applicationShouldTerminate_, selector=b"applicationShouldTerminate:", signature=b"Q@:@")])
+            # Signature « I@:@ » : c'est celle que pywebview déclare déjà (« Q@:@ » était refusé,
+            # donc Cmd+Q ne quittait pas l'app et elle restait ouverte dans la barre des menus)
+            objc.selector(applicationShouldTerminate_, selector=b"applicationShouldTerminate:", signature=b"I@:@")])
     except Exception as e:
         print(f"Cmd+Q : {e}", flush=True)
 
@@ -148,10 +150,27 @@ def couleur_fond():
         return "#ECECF1"
 
 
+def signaler_fermeture():
+    """Fenêtre fermée (bouton rouge) : l'app décide si elle quitte aussi (réglage « Fermeture »)."""
+    import urllib.request
+    from urllib.parse import urlparse
+    base = "{0.scheme}://{0.netloc}".format(urlparse(url))
+    try:
+        requete = urllib.request.Request(base + "/api/fenetre-fermee", data=b"{}", method="POST",
+                                         headers={"X-Jeton": JETON, "Content-Type": "application/json"})
+        urllib.request.urlopen(requete, timeout=2).read()
+    except Exception:
+        pass   # l'app est déjà en train de quitter ou de redémarrer
+
+
 options = dict(width=1100, height=720, min_size=(880, 580), background_color=couleur_fond())
 try:
-    webview.create_window("MiroRecap", url, vibrancy=True, **options)
+    fenetre = webview.create_window("MiroRecap", url, vibrancy=True, **options)
 except TypeError:
     # Ancienne version de pywebview sans vibrancy : fenêtre normale
-    webview.create_window("MiroRecap", url, **options)
+    fenetre = webview.create_window("MiroRecap", url, **options)
+try:
+    fenetre.events.closed += signaler_fermeture
+except Exception as e:
+    print(f"Fermeture de la fenêtre : {e}", flush=True)
 webview.start(apres_demarrage)
