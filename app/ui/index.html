@@ -747,6 +747,39 @@
   /* Boutons principaux : léger dégradé */
   .bouton.principal { background: linear-gradient(#2E8BFF, #0A6CFF); box-shadow: 0 2px 8px rgba(10, 108, 255, .35), inset 0 1px 0 rgba(255, 255, 255, .25); }
   .bouton.principal:hover { background: linear-gradient(#2680F0, #095FE0); }
+
+  /* ============ Panneaux : repliables et redimensionnables ============ */
+  body, body.fenetre-mac { --haut: 46px; --larg-barre: 248px; --larg-liste: 300px; }
+  body { grid-template-columns: var(--larg-barre) 1fr; transition: grid-template-columns .22s cubic-bezier(.3, .7, .3, 1); }
+  body.barre-masquee { grid-template-columns: 0 1fr; }
+  body.glisse { transition: none; }
+  body.glisse, body.glisse * { cursor: col-resize !important; -webkit-user-select: none; user-select: none; }
+  /* La bande du haut est réservée aux feux tricolores et aux deux boutons : le logo passe dessous */
+  .barre { min-width: 0; padding-top: var(--haut); transition: opacity .18s, transform .22s, margin .22s; }
+  body.barre-masquee .barre { margin-left: 0; margin-right: 0; opacity: 0; visibility: hidden; transform: translateX(-14px); pointer-events: none; }
+  .colonne-liste { width: var(--larg-liste); min-width: 0; flex-shrink: 0; }
+  body.liste-masquee .colonne-liste { display: none; }
+  #vue-comptes-rendus { position: relative; }
+
+  .bouton-panneau {
+    position: fixed; top: 11px; z-index: 50; width: 28px; height: 28px; border-radius: 8px;
+    display: grid; place-items: center; color: var(--second);
+    -webkit-app-region: no-drag;
+  }
+  .bouton-panneau:hover { background: var(--survol); color: var(--texte); }
+  .bouton-panneau[aria-pressed="true"] { color: var(--bleu); }
+  #bascule-barre { left: 12px; }
+  #bascule-liste { left: 44px; }
+  body.fenetre-mac #bascule-barre { left: 84px; }
+  body.fenetre-mac #bascule-liste { left: 116px; }
+
+  .poignee { position: fixed; top: 0; bottom: 0; width: 11px; margin-left: -5px; cursor: col-resize; z-index: 40; touch-action: none; }
+  .poignee::after { content: ""; position: absolute; top: 12px; bottom: 12px; left: 4px; width: 3px; border-radius: 2px; background: var(--bleu); opacity: 0; transition: opacity .15s; }
+  .poignee:hover::after, .poignee.active::after { opacity: .55; }
+  #poignee-barre { left: var(--larg-barre); }
+  body.barre-masquee #poignee-barre { display: none; }
+  #poignee-liste { position: absolute; left: var(--larg-liste); }
+  body.liste-masquee #poignee-liste { display: none; }
 </style>
 </head>
 <body>
@@ -770,10 +803,15 @@
   <symbol id="i-claude" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" d="M10 8h5M9.4 6.6l2.5-2.5M8 6V1M6.6 6.6 4.1 4.1M6 8H1M6.6 9.4l-2.5 2.5M8 10v5M9.4 9.4l2.5 2.5"/></symbol>
   <symbol id="i-lien" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6.5 9.5a2.5 2.5 0 0 0 3.5 0l2.5-2.5a2.5 2.5 0 0 0-3.5-3.5l-.8.8"/><path d="M9.5 6.5a2.5 2.5 0 0 0-3.5 0L3.5 9a2.5 2.5 0 0 0 3.5 3.5l.8-.8"/></g></symbol>
   <symbol id="i-gpt" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.25"><rect x="4.3" y="1.6" width="7.4" height="12.8" rx="3.7"/><rect x="4.3" y="1.6" width="7.4" height="12.8" rx="3.7" transform="rotate(60 8 8)"/><rect x="4.3" y="1.6" width="7.4" height="12.8" rx="3.7" transform="rotate(120 8 8)"/></g></symbol>
-  <symbol id="i-micro" viewBox="0 0 16 16"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5"/></symbol>
+  <symbol id="i-barre" viewBox="0 0 16 16"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path stroke="currentColor" stroke-width="1.4" d="M6 3v10"/></symbol>
+  <symbol id="i-liste" viewBox="0 0 16 16"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path stroke="currentColor" stroke-width="1.4" d="M9.2 3v10"/></symbol>
+  <symbol id="i-micro"viewBox="0 0 16 16"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5"/></symbol>
 </svg>
 
 <!-- ============ Barre latérale ============ -->
+<button id="bascule-barre" class="bouton-panneau" type="button" aria-pressed="true" aria-label="Masquer la barre latérale" title="Barre latérale (⌘B)"><svg width="16" height="16"><use href="#i-barre"/></svg></button>
+<button id="bascule-liste" class="bouton-panneau" type="button" aria-pressed="true" aria-label="Masquer la liste" title="Liste des comptes rendus (⇧⌘B)" hidden><svg width="16" height="16"><use href="#i-liste"/></svg></button>
+<div id="poignee-barre" class="poignee" role="separator" aria-orientation="vertical" aria-label="Largeur de la barre latérale" title="Glisse pour redimensionner · double-clic pour réinitialiser"></div>
 <aside class="barre">
   <div class="marque"><img src="/icone.png" alt="" width="26" height="26"><span>MiroRecap</span></div>
   <div class="barre-defilement">
@@ -839,6 +877,7 @@
 
   <!-- Comptes rendus -->
   <section id="vue-comptes-rendus" class="vue" hidden>
+    <div id="poignee-liste" class="poignee" role="separator" aria-orientation="vertical" aria-label="Largeur de la liste" title="Glisse pour redimensionner · double-clic pour réinitialiser"></div>
     <div class="colonne-liste">
       <div class="entete-liste">
         <div class="ligne"><h1 id="titre-liste">Comptes rendus</h1><span class="droite"><span id="filtre-actif" class="second"></span><button id="mode-selection" class="lien" type="button">Sélectionner</button></span></div>
@@ -1305,6 +1344,7 @@
     const projetOuvert = h.startsWith("projet/") ? decodeURIComponent(h.slice(7)) : "";
     const vue = projetOuvert ? "projet" : (VUES.includes(h) ? h : "comptes-rendus");
     VUES.forEach((v) => { $(`#vue-${v}`).hidden = v !== vue; });
+    $("#bascule-liste").hidden = vue !== "comptes-rendus";
     document.querySelectorAll(".elt[data-vue]").forEach((a) => {
       const actif = (a.dataset.vue === vue || (vue === "projet" && a.dataset.vue === "projets" && false)) && !(vue === "comptes-rendus" && filtreProjet);
       a.toggleAttribute("aria-current", actif);
@@ -1352,6 +1392,7 @@
     $("#rec").setAttribute("aria-label", e.enregistrement ? "Arrêter" : "Enregistrer");
     $("#rec-texte").textContent = e.enregistrement ? "Arrêter et analyser" : "Enregistrer";
     $("#enregistreur").classList.toggle("enregistre", e.enregistrement);
+    if (e.enregistrement && window.panneaux) panneaux.montrerListe();   // le bouton Arrêter ne doit jamais être caché
     const m = String(Math.floor(e.duree / 60)).padStart(2, "0");
     const s = String(e.duree % 60).padStart(2, "0");
     $("#chrono").textContent = `${m}:${s}`;
@@ -1623,6 +1664,60 @@
   // Dans la fenêtre de l'app (barre de titre intégrée) : on laisse la place aux feux tricolores
   const marquerFenetre = () => document.body.classList.add("fenetre-mac");
   if (window.pywebview) marquerFenetre(); else window.addEventListener("pywebviewready", marquerFenetre);
+
+  // Panneaux : barre latérale et liste repliables, largeurs réglables (mémorisées)
+  window.panneaux = (() => {
+    const CLE = "mirorecap.panneaux", DEF = { barre: 248, liste: 300 };
+    const etat = { ...DEF, barreMasquee: false, listeMasquee: false };
+    try { Object.assign(etat, JSON.parse(localStorage.getItem(CLE) || "{}")); } catch (_) {}
+    const corps = document.body;
+    const borne = (v, min, max) => Math.max(min, Math.min(max, Math.round(v)));
+    const appliquer = (sauver = true) => {
+      etat.barre = borne(etat.barre, 200, 360);
+      const reste = window.innerWidth - (etat.barreMasquee ? 0 : etat.barre);
+      etat.liste = borne(etat.liste, 240, Math.max(240, Math.min(520, reste - 360)));
+      corps.style.setProperty("--larg-barre", etat.barre + "px");
+      corps.style.setProperty("--larg-liste", etat.liste + "px");
+      corps.classList.toggle("barre-masquee", etat.barreMasquee);
+      corps.classList.toggle("liste-masquee", etat.listeMasquee);
+      $("#bascule-barre").setAttribute("aria-pressed", String(!etat.barreMasquee));
+      $("#bascule-barre").setAttribute("aria-label", etat.barreMasquee ? "Afficher la barre latérale" : "Masquer la barre latérale");
+      $("#bascule-liste").setAttribute("aria-pressed", String(!etat.listeMasquee));
+      $("#bascule-liste").setAttribute("aria-label", etat.listeMasquee ? "Afficher la liste" : "Masquer la liste");
+      if (sauver) { try { localStorage.setItem(CLE, JSON.stringify(etat)); } catch (_) {} }
+    };
+    const glisser = (poignee, largeur) => {
+      poignee.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        poignee.setPointerCapture(ev.pointerId);
+        poignee.classList.add("active"); corps.classList.add("glisse");
+        const depart = poignee.getBoundingClientRect().left + 5;   // bord réel du panneau
+        const delta = ev.clientX - depart;
+        const bouger = (m) => { etat[largeur] = m.clientX - delta - (largeur === "liste" && !etat.barreMasquee ? etat.barre : 0); appliquer(false); };
+        const fin = () => {
+          poignee.removeEventListener("pointermove", bouger); poignee.removeEventListener("pointerup", fin); poignee.removeEventListener("pointercancel", fin);
+          poignee.classList.remove("active"); corps.classList.remove("glisse"); appliquer();
+        };
+        poignee.addEventListener("pointermove", bouger); poignee.addEventListener("pointerup", fin); poignee.addEventListener("pointercancel", fin);
+      });
+      poignee.addEventListener("dblclick", () => { etat[largeur] = DEF[largeur]; appliquer(); });
+    };
+    glisser($("#poignee-barre"), "barre");
+    glisser($("#poignee-liste"), "liste");
+    const api = {
+      basculerBarre() { etat.barreMasquee = !etat.barreMasquee; appliquer(); },
+      basculerListe() { etat.listeMasquee = !etat.listeMasquee; appliquer(); },
+      montrerListe() { if (etat.listeMasquee) { etat.listeMasquee = false; appliquer(); } },
+    };
+    $("#bascule-barre").addEventListener("click", api.basculerBarre);
+    $("#bascule-liste").addEventListener("click", api.basculerListe);
+    document.addEventListener("keydown", (ev) => {
+      if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && ev.code === "KeyB") { ev.preventDefault(); ev.shiftKey ? api.basculerListe() : api.basculerBarre(); }
+    });
+    window.addEventListener("resize", () => appliquer(false));
+    appliquer(false);
+    return api;
+  })();
 
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape" && modeSelection && !document.querySelector("dialog[open]")) basculerModeSelection(false);

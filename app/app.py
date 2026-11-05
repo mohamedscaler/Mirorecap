@@ -752,6 +752,32 @@ def nettoyer_segments(segments):
     return propres
 
 
+def reparer_wav(chemin):
+    """Recalcule les tailles de l'en-tête d'un WAV jamais refermé (enregistrement interrompu).
+    Retourne True si le fichier a été corrigé."""
+    import struct
+    taille = chemin.stat().st_size
+    with open(chemin, "r+b") as f:
+        entete = f.read(12)
+        if len(entete) < 12 or entete[:4] != b"RIFF" or entete[8:12] != b"WAVE":
+            return False
+        pos = 12
+        while pos + 8 <= taille:
+            f.seek(pos)
+            ident, n = struct.unpack("<4sI", f.read(8))
+            if ident == b"data":
+                reel = taille - pos - 8
+                if n == reel:
+                    return False   # déjà correct : le problème est ailleurs
+                f.seek(pos + 4)
+                f.write(struct.pack("<I", reel))
+                f.seek(4)
+                f.write(struct.pack("<I", taille - 8))
+                return True
+            pos += 8 + n + (n & 1)
+    return False
+
+
 def transcrire(chemin_audio, modele=None):
     """Retourne la transcription horodatée : '[mm:ss] texte' par ligne.
     Au premier usage d'un modèle, ses fichiers sont téléchargés (~/.cache/huggingface)."""
@@ -761,10 +787,13 @@ def transcrire(chemin_audio, modele=None):
     # afconvert est fourni avec macOS : il lit m4a, mp3, wav, caf, mp4… sans ffmpeg
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "audio.wav"
-        r = subprocess.run(
-            ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(chemin_audio), str(wav)],
-            capture_output=True, text=True,
-        )
+        commande = ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(chemin_audio), str(wav)]
+        r = subprocess.run(commande, capture_output=True, text=True)
+        # Enregistrement interrompu (app fermée ou plantée) : le WAV n'a jamais été refermé et sa
+        # taille est à 0 dans l'en-tête. On la recalcule, l'audio lui-même est intact.
+        if r.returncode != 0 and chemin_audio.suffix.lower() == ".wav" and reparer_wav(chemin_audio):
+            print(f"En-tête WAV réparé : {chemin_audio.name}", flush=True)
+            r = subprocess.run(commande, capture_output=True, text=True)
         if r.returncode != 0:
             raise RuntimeError(f"format audio illisible ({r.stderr.strip() or chemin_audio.suffix})")
         audio, _ = sf.read(str(wav), dtype="float32")
