@@ -2197,7 +2197,7 @@
   function afficherJauge(ligne, valeur, classe, texte) {
     ligne.classList.remove("faible", "sature", "ok", "coupe");
     if (classe) ligne.classList.add(classe);
-    ligne.querySelector("i").style.width = Math.min(100, Math.round(Math.sqrt(valeur) * 100)) + "%";   // échelle douce : les voix basses restent visibles
+    ligne.querySelector("i").style.width = Math.min(100, Math.round(valeur * 100)) + "%";   // valeur déjà en dB (-60 à 0 dBFS) : les voix basses restent visibles
     const t = ligne.querySelector(".etat"); if (texte !== undefined) t.textContent = texte;
   }
   function majNiveaux(n) {
@@ -2206,9 +2206,9 @@
     const ecoute = n.enregistrement || n.moniteur;
     let classe = "", texte = "";
     if (n.sature) { classe = "sature"; texte = "Trop fort : baisse le volume d'entrée"; }
-    else if (niveauxEtat.pic < 0.02 && maintenant - niveauxEtat.debutEcoute > 4000) { classe = "faible"; texte = "Quasi muet : vérifie le micro choisi"; }
-    else if (niveauxEtat.pic < 0.08 && maintenant - niveauxEtat.debutEcoute > 4000) { classe = "faible"; texte = "Faible : parle plus fort ou monte le volume"; }
-    else if (niveauxEtat.pic >= 0.08) { classe = "ok"; texte = "Niveau correct"; }
+    else if (niveauxEtat.pic < 0.25 && maintenant - niveauxEtat.debutEcoute > 4000) { classe = "faible"; texte = "Quasi muet : vérifie le micro choisi"; }
+    else if (niveauxEtat.pic < 0.42 && maintenant - niveauxEtat.debutEcoute > 4000) { classe = "faible"; texte = "Faible : parle plus fort ou monte le volume"; }
+    else if (niveauxEtat.pic >= 0.42) { classe = "ok"; texte = "Niveau correct"; }
     else texte = "Écoute…";
     document.querySelectorAll('.niveau [data-n="micro"]').forEach((el) => {
       const ligne = el.closest(".niveau");
@@ -2220,7 +2220,7 @@
     const ligneSys = document.querySelector('#niveaux [data-n="systeme"]')?.closest(".niveau");
     if (ligneSys && n.enregistrement) {
       const s = n.systeme || {};
-      if (s.niveau > 0.003) niveauxEtat.silenceSysteme = maintenant;
+      if (s.niveau > 0.15) niveauxEtat.silenceSysteme = maintenant;
       if (s.etat === "off") afficherJauge(ligneSys, 0, "coupe", "Désactivé");
       else if (s.etat === "refusee") afficherJauge(ligneSys, 0, "faible", "Refusé par macOS");
       else if (s.etat === "indisponible") afficherJauge(ligneSys, 0, "faible", "Outil absent");

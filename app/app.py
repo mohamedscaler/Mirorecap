@@ -33,6 +33,7 @@ import unicodedata
 import urllib.parse
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 import sounddevice as sd
@@ -356,7 +357,8 @@ class Enregistreur:
             if direct:
                 direct.ajouter_micro(indata.copy())
             pic = float(np.abs(indata).max()) / 32768.0
-            self.niveau_micro = max(pic, self.niveau_micro * 0.85)   # retombe doucement, pour une jauge lisible
+            niveau = niveau_affiche(indata.astype("float32") / 32768.0)
+            self.niveau_micro = max(niveau, self.niveau_micro * 0.85)   # retombe doucement, pour une jauge lisible
             if pic >= 0.98:
                 self.dernier_pic_sature = time_monotonic()
 
@@ -469,7 +471,7 @@ class Moniteur:
 
         def callback(indata, frames, temps, statut):
             pic = float(np.abs(indata).max())
-            self.niveau = max(pic, self.niveau * 0.85)
+            self.niveau = max(niveau_affiche(indata), self.niveau * 0.85)
             if pic >= 0.98:
                 self.dernier_pic_sature = time_monotonic()
 
@@ -897,6 +899,23 @@ def segments_whisper(son, modele=None, debut=0.0, part=1.0, precis=False, suivi=
     return gardes
 
 
+def segments_par_passages(son, modele=None, debut=0.0, part=1.0, precis=False):
+    """Comme segments_whisper, mais seuls les passages parlés vont à Whisper (silences sautés).
+    Si le détecteur ne trouve rien (voix très faible), on transcrit tout, comme avant."""
+    passages = passages_parole(son)
+    if not passages:
+        return segments_whisper(son, modele, debut, part, precis)
+    total = sum(len(m) for _, m in passages) or 1
+    fait, resultat = 0, []
+    for position, morceau in passages:
+        for seg in segments_whisper(morceau, modele, debut + part * fait / total, part * len(morceau) / total, precis):
+            seg["start"] += position
+            seg["end"] += position
+            resultat.append(seg)
+        fait += len(morceau)
+    return resultat
+
+
 def horodatage(secondes):
     m, s = divmod(int(secondes), 60)
     return f"[{m:02d}:{s:02d}]"
@@ -911,7 +930,7 @@ def transcrire(chemin_audio, modele=None):
     # phrases et Claude en ferait un faux compte rendu. On s'arrête avec un message clair.
     if silencieux(son):
         raise RuntimeError(ERREUR_SILENCE)
-    return "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}" for seg in segments_whisper(son, modele))
+    return "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}" for seg in segments_par_passages(son, modele))
 
 
 # --- Deux pistes : « Moi » (micro) et « Interlocuteur » (son de l'ordinateur) ------------------
@@ -977,10 +996,10 @@ def transcrire_deux_pistes(micro, systeme, modele=None):
         if silencieux(son_micro):
             raise RuntimeError(ERREUR_SILENCE)
         return "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}"
-                         for seg in segments_whisper(son_micro, modele))
+                         for seg in segments_par_passages(son_micro, modele))
     TRAITEMENT["duree_audio"] = int(max(len(son_micro), len(son_systeme)) / 16000)
-    segs_micro = [] if silencieux(son_micro) else segments_whisper(son_micro, modele, 0.0, 0.5, precis=True)
-    segs_systeme = segments_whisper(son_systeme, modele, 0.5, 0.5, precis=True)
+    segs_micro = [] if silencieux(son_micro) else segments_par_passages(son_micro, modele, 0.0, 0.5, precis=True)
+    segs_systeme = segments_par_passages(son_systeme, modele, 0.5, 0.5, precis=True)
     return fusionner_locuteurs(segs_micro, segs_systeme)
 
 
@@ -1000,48 +1019,124 @@ def vers_16k(son, frequence):
     return resample_poly(son, FREQ // g, int(frequence) // g).astype("float32")
 
 
-class DecoupeurSilences:
-    """Accumule l'audio 16 kHz d'une piste et le coupe en morceaux de 10 à 30 s, sur un silence
-    (niveau RMS par tranches de 0,1 s). Sans silence en 30 s, coupe au moment le plus calme."""
-    TRAME, MIN_S, MAX_S = 1600, 10, 30
+class DecoupeurParole:
+    """Détecteur de parole (même logique que le VAD de Meetily) : l'audio 16 kHz est lu par trames
+    de 30 ms ; une trame est de la parole quand elle dépasse nettement le bruit de fond (mesuré en
+    continu : 10e centile des 10 dernières secondes). Seuls les passages parlés sont rendus, avec
+    300 ms avant/après ; un passage se termine après `pause` s sans parole. Les silences ne vont
+    jamais à Whisper : c'est plus rapide et il n'invente plus de phrases dessus."""
+    TRAME = 480          # 30 ms
+    MARGE = 10           # 300 ms gardés avant et après la parole
+    PAROLE_MIN = 8       # 250 ms : en dessous, c'est un clic ou un bruit
+    PLANCHER_MAX = -30   # dBFS : au-delà, on ne considère plus que c'est du bruit de fond
+    ABSOLU_MIN = -55     # dBFS : en dessous, jamais de la parole
 
-    def __init__(self):
+    def __init__(self, pause=0.6, max_s=20):
+        self.pause = int(pause * 1000 / 30)
+        self.max_trames = int(max_s * 1000 / 30)
         self.tampon = np.zeros(0, dtype="float32")
-        self.position = 0.0   # en secondes : début du tampon dans l'enregistrement
+        self.position = 0.0      # en secondes : début du tampon dans l'enregistrement
+        self.duree = 0.0         # secondes reçues au total
+        self.analyse = 0         # trames du tampon déjà analysées
+        self.db = []             # niveau (dBFS) de chaque trame analysée du tampon
+        self.historique = deque(maxlen=333)   # 10 s de niveaux, pour le bruit de fond
+        self.debut = self.fin = None          # passage parlé en cours (indices de trames du tampon)
+        self.n_parole = 0
+        self.emis = 0            # fin du dernier passage rendu (trames du tampon)
+
+    def _est_parole(self, db):
+        self.historique.append(db)
+        plancher = min(float(np.percentile(self.historique, 10)), self.PLANCHER_MAX)
+        ecart = 6 if self.debut is not None else 10   # hystérésis : plus facile de continuer que de commencer
+        return db > max(plancher + ecart, self.ABSOLU_MIN)
+
+    def _clore(self, fin, passages, suite=False):
+        a = max(self.debut - self.MARGE, self.emis, 0)
+        b = fin if suite else min(fin + self.MARGE, self.analyse)
+        if (suite or self.n_parole >= self.PAROLE_MIN) and b > a:
+            passages.append((a, b))
+            self.emis = b
+        if suite:
+            self.debut, self.n_parole = fin, self.PAROLE_MIN
+        else:
+            self.debut = self.fin = None
+            self.n_parole = 0
 
     def ajouter(self, son):
-        self.tampon = np.concatenate([self.tampon, son])
-        morceaux = []
-        while len(self.tampon) >= self.MIN_S * FREQ:
-            coupe = self._coupe()
-            if coupe is None:
-                break
-            morceaux.append((self.position, self.tampon[:coupe]))
-            self.tampon = self.tampon[coupe:]
-            self.position += coupe / FREQ
+        self.tampon = np.concatenate([self.tampon, np.asarray(son, dtype="float32")])
+        self.duree += len(son) / FREQ
+        n = len(self.tampon) // self.TRAME
+        passages = []
+        if n > self.analyse:
+            trames = self.tampon[self.analyse * self.TRAME:n * self.TRAME].reshape(-1, self.TRAME)
+            for db in 20 * np.log10(np.sqrt(np.mean(trames ** 2, axis=1)) + 1e-9):
+                i = self.analyse
+                self.analyse += 1
+                self.db.append(float(db))
+                parole = self._est_parole(db)
+                if parole:
+                    if self.debut is None:
+                        self.debut, self.n_parole = i, 0
+                    self.fin = i
+                    self.n_parole += 1
+                if self.debut is None:
+                    continue
+                if not parole and i - self.fin > self.pause:
+                    self._clore(self.fin + 1, passages)
+                elif i + 1 - self.debut >= self.max_trames:
+                    # Parole continue trop longue : coupe au moment le plus calme des 5 dernières secondes
+                    zone = max(self.debut + 1, i + 1 - 166)
+                    self._clore(zone + int(np.argmin(self.db[zone:i + 1])), passages, suite=True)
+        morceaux = [(self.position + a * self.TRAME / FREQ, self.tampon[a * self.TRAME:b * self.TRAME].copy())
+                    for a, b in passages]
+        self._elaguer()
         return morceaux
 
+    def _elaguer(self):
+        """Oublie l'audio qui ne servira plus (silence déjà analysé), en gardant la marge avant parole."""
+        garde = (self.debut if self.debut is not None else self.analyse) - self.MARGE
+        k = max(0, min(garde, self.analyse))
+        if not k:
+            return
+        self.tampon = self.tampon[k * self.TRAME:]
+        self.position += k * self.TRAME / FREQ
+        self.analyse -= k
+        self.db = self.db[k:]
+        self.emis = max(0, self.emis - k)
+        if self.debut is not None:
+            self.debut -= k
+            self.fin -= k
+
     def vider(self):
-        """Ce qui reste à l'arrêt de l'enregistrement."""
-        reste = (self.position, self.tampon) if len(self.tampon) else None
+        """À l'arrêt de l'enregistrement : le passage parlé en cours, s'il y en a un."""
+        reste = None
+        if self.debut is not None and self.n_parole >= self.PAROLE_MIN:
+            a = max(self.debut - self.MARGE, self.emis, 0)
+            reste = (self.position + a * self.TRAME / FREQ, self.tampon[a * self.TRAME:].copy())
         self.position += len(self.tampon) / FREQ
         self.tampon = np.zeros(0, dtype="float32")
+        self.analyse, self.db, self.emis = 0, [], 0
+        self.debut = self.fin = None
         return reste
 
-    def _coupe(self):
-        n = len(self.tampon) // self.TRAME
-        rms = np.sqrt(np.mean(self.tampon[:n * self.TRAME].reshape(n, self.TRAME) ** 2, axis=1))
-        lisse = np.convolve(rms, np.ones(3) / 3, mode="same")   # un silence dure au moins ~0,3 s
-        seuil = max(0.004, 0.1 * float(np.percentile(rms, 95)))
-        debut, fin = self.MIN_S * 10, min(n, self.MAX_S * 10)
-        if fin > debut:
-            calmes = np.flatnonzero(lisse[debut:fin] < seuil)
-            if len(calmes):   # premier silence après 10 s : le texte arrive au plus tôt
-                return (debut + int(calmes[0])) * self.TRAME + self.TRAME // 2
-        if n >= self.MAX_S * 10:   # 30 s sans silence : au moment le plus calme des 10 dernières secondes
-            i = (self.MAX_S - 10) * 10 + int(np.argmin(lisse[(self.MAX_S - 10) * 10:self.MAX_S * 10]))
-            return i * self.TRAME + self.TRAME // 2
-        return None
+
+def passages_parole(son, pause=2.0, max_s=30):
+    """Passages parlés d'un fichier entier (pause de 2 s comme le traitement par lot de Meetily :
+    on garde des phrases entières pour Whisper). Liste de (début en s, audio)."""
+    decoupeur = DecoupeurParole(pause, max_s)
+    passages = decoupeur.ajouter(son)
+    reste = decoupeur.vider()
+    return passages + ([reste] if reste else [])
+
+
+def niveau_affiche(bloc):
+    """Niveau pour la jauge (0 à 1) : volume moyen (RMS) en dB, de -60 dBFS (0) à 0 dBFS (1).
+    Plus fidèle qu'un pic : un clic ou un souffle ne fait plus croire qu'on parle."""
+    bloc = np.asarray(bloc, dtype="float32")
+    if not bloc.size:
+        return 0.0
+    db = 20 * np.log10(float(np.sqrt(np.mean(bloc ** 2))) + 1e-9)
+    return min(1.0, max(0.0, (db + 60) / 60))
 
 
 class LecteurWavEnCours:
@@ -1085,7 +1180,7 @@ class TranscripteurDirect:
         self._version = 0
         self.blocs_micro = queue.Queue()          # blocs bruts du micro (callback audio)
         self.lecteur_systeme = None
-        self.decoupeurs = {MOI: DecoupeurSilences(), INTERLOCUTEUR: DecoupeurSilences()}
+        self.decoupeurs = {MOI: DecoupeurParole(), INTERLOCUTEUR: DecoupeurParole()}
         self.segments = {MOI: [], INTERLOCUTEUR: []}
         self.entendu = {MOI: False, INTERLOCUTEUR: False}
         self.morceaux = queue.Queue()             # (qui, début en s, audio 16 kHz, heure d'arrivée)
@@ -1137,7 +1232,7 @@ class TranscripteurDirect:
     def _preparer(self):
         try:
             while True:
-                fin = self.arret.wait(1.0)
+                fin = self.arret.wait(0.3)   # le texte arrive moins d'une seconde après la fin d'une phrase
                 if self.mode != "direct":
                     while not self.blocs_micro.empty():   # mode « à la fin » : on jette, sans calcul
                         self.blocs_micro.get_nowait()
@@ -1173,9 +1268,8 @@ class TranscripteurDirect:
                 continue
             self.en_cours = arrivee
             try:
-                # Horodatage mot par mot seulement quand il y a deux voix à ordonner (comme le traitement classique)
-                precis = qui == INTERLOCUTEUR or self.entendu[INTERLOCUTEUR]
-                segs = segments_whisper(son, precis=precis, suivi=_SuiviMuet, dossier=self.dossier_modele)
+                # Morceaux déjà limités à la parole : pas besoin de l'horodatage mot par mot (plus lent)
+                segs = segments_whisper(son, suivi=_SuiviMuet, dossier=self.dossier_modele)
             except Exception as e:
                 self._basculer_a_la_fin(f"Whisper : {e}")
                 continue
@@ -1227,13 +1321,13 @@ class TranscripteurDirect:
         TRAITEMENT["progression"] = 0.0 if total else None
         self.au_fil = lambda fait: TRAITEMENT.update(progression=min(1.0, fait / max(total, 1)))
         self.transcripteur.join(timeout=900)
-        TRAITEMENT["duree_audio"] = int(max(d.position for d in self.decoupeurs.values()))
+        TRAITEMENT["duree_audio"] = int(max(d.duree for d in self.decoupeurs.values()))
         if self.preparateur.is_alive() or self.transcripteur.is_alive():
             self._basculer_a_la_fin("fin de transcription trop longue")
         if self.mode != "direct":
             return None
         if not self.entendu[MOI] and not self.entendu[INTERLOCUTEUR]:
-            raise RuntimeError(ERREUR_SILENCE)
+            return None   # aucune parole repérée (micro très faible ?) : le traitement complet vérifiera
         return self.texte()
 
 
