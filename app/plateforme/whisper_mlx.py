@@ -20,9 +20,10 @@ def modele_complet(dossier):
     return (dossier / "config.json").exists() and any(dossier.glob("weights.*"))
 
 
-def transcrire(audio, modele, langue, consigne, suivi):
+def transcrire(audio, modele, langue, consigne, suivi, mots=False):
     """audio : tableau float32 16 kHz mono. suivi : classe façon tqdm qui reçoit l'avancement.
-    Retourne les segments de Whisper (start, text, no_speech_prob, avg_logprob)."""
+    mots : horodatage mot par mot (segments calés précisément, utile quand l'audio a de longs silences).
+    Retourne les segments de Whisper (start, end, text, no_speech_prob, avg_logprob, words)."""
     import mlx_whisper  # import tardif : lourd à charger
     module = sys.modules.get("mlx_whisper.transcribe")
     if module is not None and hasattr(module, "tqdm"):
@@ -34,5 +35,6 @@ def transcrire(audio, modele, langue, consigne, suivi):
         verbose=False,                      # active le suivi (sans rien afficher)
         initial_prompt=consigne,            # vocabulaire et noms des projets
         condition_on_previous_text=False,   # évite les boucles et les phrases inventées en série
+        word_timestamps=mots,
     )
     return resultat.get("segments", [])

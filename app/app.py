@@ -722,14 +722,17 @@ TRAITEMENT = {"etape": "", "progression": None, "duree_audio": 0, "debut": "", "
 
 
 class _SuiviTranscription:
-    """Remplace la barre de progression texte de Whisper : on récupère l'avancement réel."""
+    """Remplace la barre de progression texte de Whisper : on récupère l'avancement réel.
+    debut / part : portion de la barre couverte (deux pistes : 0-50 % puis 50-100 %)."""
+    debut, part = 0.0, 1.0
+
     def __init__(self, total=0, **_):
         self.total, self.n = (total or 1), 0
-        TRAITEMENT["progression"] = 0.0
+        TRAITEMENT["progression"] = self.debut
 
     def update(self, n=1):
         self.n += n
-        TRAITEMENT["progression"] = min(1.0, self.n / self.total)
+        TRAITEMENT["progression"] = self.debut + self.part * min(1.0, self.n / self.total)
 
     def __enter__(self):
         return self
@@ -739,6 +742,10 @@ class _SuiviTranscription:
 
     def close(self):
         pass
+
+
+def suivi_partiel(debut, part):
+    return type("_SuiviPartiel", (_SuiviTranscription,), {"debut": debut, "part": part})
 
 
 # Phrases que Whisper invente sur les silences (apprises des sous-titres de vidéos)
@@ -810,11 +817,9 @@ def reparer_wav(chemin):
     return False
 
 
-def transcrire(chemin_audio, modele=None):
-    """Retourne la transcription horodatée : '[mm:ss] texte' par ligne.
-    Au premier usage d'un modèle, ses fichiers sont téléchargés (~/.cache/huggingface)."""
+def lire_audio_16k(chemin_audio):
+    """Audio en float32 16 kHz mono, quel que soit le format d'origine."""
     import tempfile
-
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "audio.wav"
         ok, erreur = plateforme.audio.convertir_wav_16k(chemin_audio, wav)
@@ -826,23 +831,123 @@ def transcrire(chemin_audio, modele=None):
         if not ok:
             raise RuntimeError(f"format audio illisible ({erreur or chemin_audio.suffix})")
         son, _ = sf.read(str(wav), dtype="float32")
+    return son
+
+
+def silencieux(son, seuil=0.0005):
+    return not len(son) or float(np.abs(son).max()) < seuil
+
+
+ERREUR_SILENCE = ("le micro n'a rien capté (silence complet). Choisis le bon micro dans "
+                  "Réglages et regarde la jauge bouger avant d'enregistrer")
+
+
+def segments_whisper(son, modele=None, debut=0.0, part=1.0, precis=False):
+    """Segments nettoyés (start, end, text) ; la barre de progression couvre debut → debut + part.
+    precis (deux pistes) : début et fin calés sur les mots, et segments posés sur du silence retirés
+    (Whisper en invente sur une piste presque vide, et y date mal les phrases)."""
+    segments = plateforme.whisper.transcrire(son, str(assurer_modele(modele)), CONFIG["langue"],
+                                             consigne_whisper(), suivi_partiel(debut, part), mots=precis)
+    gardes = []
+    for seg in nettoyer_segments(segments):
+        if not seg["text"].strip():
+            continue
+        if precis:
+            mots = [m for m in seg.get("words") or [] if m.get("word", "").strip()]
+            if mots:
+                seg["start"], seg["end"] = mots[0]["start"], mots[-1]["end"]
+            extrait = son[int(seg["start"] * 16000):int(seg["end"] * 16000) + 1]
+            if silencieux(extrait, 0.005):
+                continue   # rien n'a été dit à ce moment-là : phrase inventée
+        gardes.append(seg)
+    return gardes
+
+
+def horodatage(secondes):
+    m, s = divmod(int(secondes), 60)
+    return f"[{m:02d}:{s:02d}]"
+
+
+def transcrire(chemin_audio, modele=None):
+    """Retourne la transcription horodatée : '[mm:ss] texte' par ligne.
+    Au premier usage d'un modèle, ses fichiers sont téléchargés (~/.cache/huggingface)."""
+    son = lire_audio_16k(chemin_audio)
     TRAITEMENT["duree_audio"] = int(len(son) / 16000)
     # Silence complet (micro coupé, refusé ou mauvais micro choisi) : Whisper inventerait des
     # phrases et Claude en ferait un faux compte rendu. On s'arrête avec un message clair.
-    if not len(son) or float(np.abs(son).max()) < 0.0005:
-        raise RuntimeError("le micro n'a rien capté (silence complet). Choisis le bon micro dans "
-                           "Réglages et regarde la jauge bouger avant d'enregistrer")
+    if silencieux(son):
+        raise RuntimeError(ERREUR_SILENCE)
+    return "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}" for seg in segments_whisper(son, modele))
 
-    # Whisper fait avancer notre compteur (_SuiviTranscription) au lieu d'une barre texte
-    segments = plateforme.whisper.transcrire(son, str(assurer_modele(modele)), CONFIG["langue"],
-                                  consigne_whisper(), _SuiviTranscription)
-    lignes = []
-    for seg in nettoyer_segments(segments):
-        texte = seg["text"].strip()
-        if texte:
-            m, s = divmod(int(seg["start"]), 60)
-            lignes.append(f"[{m:02d}:{s:02d}] {texte}")
-    return "\n".join(lignes)
+
+# --- Deux pistes : « Moi » (micro) et « Interlocuteur » (son de l'ordinateur) ------------------
+
+MOI, INTERLOCUTEUR = "Moi", "Interlocuteur"
+
+
+def _texte_normalise(texte):
+    texte = unicodedata.normalize("NFKD", texte.lower())
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", texte.encode("ascii", "ignore").decode()).split())
+
+
+def est_echo(seg_micro, segs_systeme, marge=1.5, ressemblance=0.6):
+    """Sans casque, le son de l'ordinateur ressort par les haut-parleurs et repasse dans le micro :
+    un segment micro qui chevauche (à `marge` s près) un segment système presque identique est un écho."""
+    import difflib
+    a = _texte_normalise(seg_micro["text"])
+    if not a:
+        return True
+    for seg in segs_systeme:
+        if seg["start"] > seg_micro["end"] + marge or seg_micro["start"] > seg["end"] + marge:
+            continue
+        b = _texte_normalise(seg["text"])
+        if not b:
+            continue
+        if difflib.SequenceMatcher(None, a, b).ratio() >= ressemblance:
+            return True
+        court, long_ = sorted((a, b), key=len)
+        if len(court) >= 12 and court in long_:   # écho partiel (début ou fin de phrase)
+            return True
+    return False
+
+
+def fusionner_locuteurs(segs_micro, segs_systeme):
+    """Segments des deux pistes, écho retiré, dans l'ordre chronologique, étiquetés.
+    Les segments consécutifs du même locuteur forment une seule ligne."""
+    gardes = [(seg, MOI) for seg in segs_micro if not est_echo(seg, segs_systeme)]
+    gardes += [(seg, INTERLOCUTEUR) for seg in segs_systeme]
+    gardes.sort(key=lambda x: (x[0]["start"], x[1] != INTERLOCUTEUR))
+    lignes = []   # [debut, locuteur, [textes]]
+    for seg, qui in gardes:
+        if lignes and lignes[-1][1] == qui:
+            lignes[-1][2].append(seg["text"].strip())
+        else:
+            lignes.append([seg["start"], qui, [seg["text"].strip()]])
+    return "\n".join(f"{horodatage(d)} {qui} : {' '.join(t)}" for d, qui, t in lignes)
+
+
+def transcrire_deux_pistes(micro, systeme, modele=None):
+    """Transcrit séparément le micro (« Moi ») et le son de l'ordinateur (« Interlocuteur »).
+    Sans piste système exploitable (autorisation refusée, appel en présentiel) : comme avant,
+    une seule piste sans étiquettes."""
+    son_micro = lire_audio_16k(micro)
+    son_systeme = None
+    if systeme and Path(systeme).exists():
+        try:
+            son_systeme = lire_audio_16k(Path(systeme))
+        except Exception as e:
+            print(f"Piste du son de l'ordinateur illisible, micro seul : {e}", flush=True)
+    # Piste système absente ou muette (capture refusée : macOS envoie du silence) → comportement actuel
+    if son_systeme is None or silencieux(son_systeme, 0.001):
+        TRAITEMENT["duree_audio"] = int(len(son_micro) / 16000)
+        if silencieux(son_micro):
+            raise RuntimeError(ERREUR_SILENCE)
+        return "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}"
+                         for seg in segments_whisper(son_micro, modele))
+    TRAITEMENT["duree_audio"] = int(max(len(son_micro), len(son_systeme)) / 16000)
+    segs_micro = [] if silencieux(son_micro) else segments_whisper(son_micro, modele, 0.0, 0.5, precis=True)
+    segs_systeme = segments_whisper(son_systeme, modele, 0.5, 0.5, precis=True)
+    return fusionner_locuteurs(segs_micro, segs_systeme)
 
 
 # ---------------------------------------------------------------------------
@@ -1082,6 +1187,8 @@ def instructions_analyse(noms, projets):
     return f"""Tu analyses des transcriptions automatiques d'appels et de rendez-vous pro (elles peuvent contenir des erreurs de reconnaissance).
 
 {"Qui je suis (c'est moi qui enregistre, utilise-le pour comprendre l'appel et rédiger le mail) :" + chr(10) + profil if profil else "Je n'ai pas encore décrit mon activité."}
+
+Qui parle : quand les lignes de la transcription commencent par « Moi : », c'est moi (l'utilisateur, celui qui enregistre) ; « Interlocuteur : », c'est la ou les autres personnes de l'appel (plusieurs personnes possibles, à distinguer par le contexte). Attribue les engagements, les actions à faire et les décisions à la bonne personne : ce que « Moi » promet de faire est à faire par moi ; le mail de suivi est écrit par moi à l'interlocuteur. Sans étiquettes, les voix ne sont pas séparées : déduis qui parle du contexte.
 
 Projets existants :
 {liste or "(aucun projet créé pour l'instant)"}
@@ -1656,7 +1763,7 @@ Corrige UNIQUEMENT les erreurs de reconnaissance vocale : mots mal entendus, nom
 (clients, entreprises, marques, outils), chiffres et montants mal transcrits, ponctuation.
 Règles strictes :
 - ne résume pas, ne reformule pas, n'ajoute rien, ne supprime aucune information ;
-- garde exactement une ligne par ligne d'origine et son horodatage [mm:ss] au début ;
+- garde exactement une ligne par ligne d'origine et son horodatage [mm:ss] au début, ainsi que l'étiquette « Moi : » ou « Interlocuteur : » quand il y en a une ;
 - supprime seulement les phrases manifestement parasites (« sous-titres réalisés par… », répétitions en boucle) ;
 - si tu n'es pas sûr d'une correction, laisse le mot tel quel ;
 - réponds uniquement par la transcription corrigée, sans commentaire.
@@ -3004,7 +3111,7 @@ class App:
                 self.traiter_amelioration(tache)
                 continue
             chemin, date = tache
-            transcription = None
+            transcription, pistes, temporaires = None, None, []
             TRAITEMENT.update(etape="preparation", progression=None, duree_audio=0,
                               debut=dt.datetime.now().isoformat(timespec="seconds"),
                               date=date.isoformat(timespec="minutes"))
@@ -3014,20 +3121,24 @@ class App:
                     self.statut = "Finalisation…"
                 systeme = finaliser() if finaliser else None
                 if systeme:
+                    # Piste micro seule gardée à part pour la transcription par locuteur ;
+                    # le fichier conservé (réécoute) reste le mélange des deux
                     self.statut = "Mixage…"
+                    micro_seul = systeme.with_name(systeme.stem + "-micro.wav")
+                    temporaires += [systeme, micro_seul]
                     try:
+                        shutil.copy(chemin, micro_seul)
                         mixer_pistes(chemin, systeme)
+                        pistes = (micro_seul, systeme)
                     except Exception as e:
                         print(f"Mixage impossible, micro seul : {e}", flush=True)
-                    finally:
-                        systeme.unlink(missing_ok=True)
                 if MODELE["etat"] != "pret":
                     self.statut = "Téléchargement de Whisper…"
                     TRAITEMENT.update(etape="modele", progression=None)
                     assurer_modele()
                 self.statut = "Transcription…"
                 TRAITEMENT.update(etape="transcription", progression=0.0)
-                transcription = transcrire(chemin)
+                transcription = transcrire_deux_pistes(*pistes) if pistes else transcrire(chemin)
                 if not transcription:
                     raise ValueError("aucune parole détectée")
                 self.statut = "Analyse…"
@@ -3061,6 +3172,8 @@ class App:
                     destination.with_suffix(".txt").write_text(transcription, encoding="utf-8")
                 notifier("Erreur de traitement", f"{chemin.name} : {e}")
             finally:
+                for f in temporaires:   # pistes séparées : seul le mélange est conservé
+                    f.unlink(missing_ok=True)
                 TRAITEMENT.update(etape="", progression=None)
                 self.en_file.discard(chemin)
                 self.tailles.pop(chemin, None)
