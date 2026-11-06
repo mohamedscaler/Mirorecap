@@ -124,9 +124,11 @@ def envoyer_position_feux():
             droite = r.origin.x + r.size.width
             milieu = haut - (r.origin.y + r.size.height / 2)
             print(f"Feux tricolores : bord droit {droite:.0f}, milieu {milieu:.0f}", flush=True)
-            webview.windows[0].evaluate_js(
-                "document.documentElement.style.setProperty('--feux-x','%.0fpx');"
-                "document.documentElement.style.setProperty('--feux-y','%.0fpx');" % (droite, milieu))
+            script = ("document.documentElement.style.setProperty('--feux-x','%.0fpx');"
+                      "document.documentElement.style.setProperty('--feux-y','%.0fpx');" % (droite, milieu))
+            # Jamais evaluate_js sur le fil principal : pywebview y attend la réponse de la page,
+            # qui ne peut arriver que par ce même fil. La fenêtre restait figée pour toujours.
+            threading.Thread(target=webview.windows[0].evaluate_js, args=(script,), daemon=True).start()
             return
     except Exception as e:
         print(f"Position des feux tricolores : {e}", flush=True)
