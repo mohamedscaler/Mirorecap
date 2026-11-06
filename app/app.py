@@ -345,7 +345,8 @@ class Enregistreur:
 
         direct = None
         try:
-            direct = TranscripteurDirect(frequence) if direct_possible() else None
+            dossier = dossier_modele_direct()
+            direct = TranscripteurDirect(frequence, dossier) if dossier else None
         except Exception as e:
             print(f"Transcription en direct indisponible : {e}", flush=True)
         self.direct = direct
@@ -369,10 +370,14 @@ class Enregistreur:
             self._flux.start()
         except Exception as e:
             if peripherique is None:
+                if direct:
+                    direct.arret.set()   # micro inaccessible : les threads du direct s'arrêtent
                 raise
             print(f"Micro choisi inutilisable ({e}) : micro par défaut", flush=True)
             frequence_defaut = int(sd.query_devices(kind="input")["default_samplerate"])
             if frequence_defaut != frequence:
+                if direct:
+                    direct.arret.set()
                 raise RuntimeError("le micro choisi est inaccessible : choisis-en un autre dans Réglages → Enregistrement")
             self._flux = sd.InputStream(samplerate=frequence, channels=1, dtype="int16", callback=callback)
             self._flux.start()
@@ -869,11 +874,11 @@ class _SuiviMuet(_SuiviTranscription):
         pass
 
 
-def segments_whisper(son, modele=None, debut=0.0, part=1.0, precis=False, suivi=None):
+def segments_whisper(son, modele=None, debut=0.0, part=1.0, precis=False, suivi=None, dossier=None):
     """Segments nettoyés (start, end, text) ; la barre de progression couvre debut → debut + part.
     precis (deux pistes) : début et fin calés sur les mots, et segments posés sur du silence retirés
     (Whisper en invente sur une piste presque vide, et y date mal les phrases)."""
-    dossier = str(assurer_modele(modele))
+    dossier = dossier or str(assurer_modele(modele))
     with VERROU_WHISPER:
         segments = plateforme.whisper.transcrire(son, dossier, CONFIG["langue"], consigne_whisper(),
                                                  suivi or suivi_partiel(debut, part), mots=precis)
@@ -1049,7 +1054,7 @@ class LecteurWavEnCours:
         try:
             with open(self.chemin, "rb") as f:
                 if self.donnees is None:
-                    entete = f.read(4096)
+                    entete = f.read(8192)
                     fmt, pos = entete.find(b"fmt "), entete.find(b"data")
                     if fmt < 0 or pos < 0:
                         return None
@@ -1073,8 +1078,11 @@ class TranscripteurDirect:
     en mode « à la fin » : tout sera transcrit après l'arrêt, comme avant."""
     RETARD_MAX = 60
 
-    def __init__(self, frequence_micro):
+    def __init__(self, frequence_micro, dossier_modele):
         self.frequence_micro = frequence_micro
+        self.dossier_modele = dossier_modele      # figé pour tout l'appel (changer de modèle ne le perturbe pas)
+        self._cache = (-1, "")                    # (version des segments, texte)
+        self._version = 0
         self.blocs_micro = queue.Queue()          # blocs bruts du micro (callback audio)
         self.lecteur_systeme = None
         self.decoupeurs = {MOI: DecoupeurSilences(), INTERLOCUTEUR: DecoupeurSilences()}
@@ -1110,7 +1118,14 @@ class TranscripteurDirect:
         brut = np.concatenate(blocs).reshape(-1).astype("float32") / 32768.0
         return vers_16k(brut, self.frequence_micro)
 
+    def _basculer_a_la_fin(self, raison):
+        if self.mode == "direct":
+            self.mode = "fin"
+            print(f"Transcription en direct arrêtée ({raison}) : elle se fera à la fin", flush=True)
+
     def _deposer(self, qui, morceaux):
+        if not self.arret.is_set() and self.retard() > self.RETARD_MAX:
+            self._basculer_a_la_fin("trop de retard")
         for debut, son in morceaux:
             if self.mode != "direct":
                 return
@@ -1120,19 +1135,29 @@ class TranscripteurDirect:
             self.morceaux.put((qui, debut, son, time.time()))
 
     def _preparer(self):
-        while True:
-            fin = self.arret.wait(1.0)
-            for qui, son in ((MOI, self._lire_micro()),
-                             (INTERLOCUTEUR, self.lecteur_systeme.lire() if self.lecteur_systeme else None)):
-                if son is not None and len(son):
-                    self._deposer(qui, self.decoupeurs[qui].ajouter(son))
-            if fin:
-                for qui, decoupeur in self.decoupeurs.items():
-                    reste = decoupeur.vider()
-                    if reste:
-                        self._deposer(qui, [reste])
-                self.morceaux.put(None)   # fin de la file
-                return
+        try:
+            while True:
+                fin = self.arret.wait(1.0)
+                if self.mode != "direct":
+                    while not self.blocs_micro.empty():   # mode « à la fin » : on jette, sans calcul
+                        self.blocs_micro.get_nowait()
+                    if fin:
+                        return
+                    continue
+                for qui, son in ((MOI, self._lire_micro()),
+                                 (INTERLOCUTEUR, self.lecteur_systeme.lire() if self.lecteur_systeme else None)):
+                    if son is not None and len(son):
+                        self._deposer(qui, self.decoupeurs[qui].ajouter(son))
+                if fin:
+                    for qui, decoupeur in self.decoupeurs.items():
+                        reste = decoupeur.vider()
+                        if reste:
+                            self._deposer(qui, [reste])
+                    return
+        except Exception as e:
+            self._basculer_a_la_fin(f"découpe : {e}")
+        finally:
+            self.morceaux.put(None)   # fin de la file, toujours : le thread de transcription ne reste jamais bloqué
 
     def _transcrire(self):
         fait = 0
@@ -1144,15 +1169,15 @@ class TranscripteurDirect:
             if self.mode != "direct":
                 continue
             if not self.arret.is_set() and time.time() - arrivee > self.RETARD_MAX:
-                self.mode = "fin"
-                print("Transcription en direct trop en retard : elle se fera à la fin", flush=True)
+                self._basculer_a_la_fin("trop de retard")
                 continue
             self.en_cours = arrivee
             try:
-                segs = segments_whisper(son, precis=True, suivi=_SuiviMuet)
+                # Horodatage mot par mot seulement quand il y a deux voix à ordonner (comme le traitement classique)
+                precis = qui == INTERLOCUTEUR or self.entendu[INTERLOCUTEUR]
+                segs = segments_whisper(son, precis=precis, suivi=_SuiviMuet, dossier=self.dossier_modele)
             except Exception as e:
-                print(f"Transcription en direct : {e}", flush=True)
-                self.mode = "fin"
+                self._basculer_a_la_fin(f"Whisper : {e}")
                 continue
             finally:
                 self.en_cours = None
@@ -1162,6 +1187,7 @@ class TranscripteurDirect:
             with self.verrou:
                 self.segments[qui].extend(segs)
                 self.segments[qui].sort(key=lambda x: x["start"])
+                self._version += 1
             fait += 1
             if self.au_fil:
                 self.au_fil(fait)
@@ -1169,17 +1195,25 @@ class TranscripteurDirect:
     # --- sorties ---
     def retard(self):
         """Secondes d'attente du morceau le plus ancien pas encore transcrit."""
-        heures = [self.en_cours] if self.en_cours else []
+        en_cours = self.en_cours
+        heures = [en_cours] if en_cours else []
         with self.morceaux.mutex:
             heures += [t[3] for t in self.morceaux.queue if t]
         return int(time.time() - min(heures)) if heures else 0
 
     def texte(self):
         with self.verrou:
+            version = self._version
+            if self._cache[0] == version:
+                return self._cache[1]
             micro, systeme = list(self.segments[MOI]), list(self.segments[INTERLOCUTEUR])
         if not self.entendu[INTERLOCUTEUR]:   # pas de son de l'ordinateur : pas d'étiquettes, comme avant
-            return "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}" for seg in micro)
-        return fusionner_locuteurs(micro, systeme)
+            texte = "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}" for seg in micro)
+        else:
+            texte = fusionner_locuteurs(micro, systeme)
+        with self.verrou:
+            self._cache = (version, texte)
+        return texte
 
     def etat(self):
         return {"mode": self.mode, "texte": self.texte(), "retard": self.retard() if self.mode == "direct" else 0}
@@ -1188,12 +1222,14 @@ class TranscripteurDirect:
         """À l'arrêt (pistes finalisées) : transcrit ce qui reste. Retourne la transcription,
         ou None si le direct a basculé en mode « à la fin » (tout sera retranscrit)."""
         self.arret.set()
-        self.preparateur.join()
-        total = self.morceaux.qsize()
+        self.preparateur.join(timeout=60)
+        total = max(self.morceaux.qsize() - 1, 0) + (1 if self.en_cours else 0)   # sans la marque de fin
         TRAITEMENT["progression"] = 0.0 if total else None
         self.au_fil = lambda fait: TRAITEMENT.update(progression=min(1.0, fait / max(total, 1)))
-        self.transcripteur.join()
+        self.transcripteur.join(timeout=900)
         TRAITEMENT["duree_audio"] = int(max(d.position for d in self.decoupeurs.values()))
+        if self.preparateur.is_alive() or self.transcripteur.is_alive():
+            self._basculer_a_la_fin("fin de transcription trop longue")
         if self.mode != "direct":
             return None
         if not self.entendu[MOI] and not self.entendu[INTERLOCUTEUR]:
@@ -1201,10 +1237,13 @@ class TranscripteurDirect:
         return self.texte()
 
 
-def direct_possible():
-    """Transcription en direct si elle est activée et que le modèle Whisper est déjà sur le Mac
-    (pas de gros téléchargement en plein appel)."""
-    return CONFIG.get("transcription_direct", True) and modele_local(CONFIG["modele_whisper"]) is not None
+def dossier_modele_direct():
+    """Dossier du modèle Whisper pour la transcription en direct, ou None : désactivée, ou modèle
+    pas encore sur le Mac (pas de gros téléchargement en plein appel)."""
+    if not CONFIG.get("transcription_direct", True):
+        return None
+    local = modele_local(CONFIG["modele_whisper"])
+    return str(local) if local else None
 
 
 
@@ -3405,6 +3444,12 @@ class App:
                 if direct:
                     self.statut = "Fin de la transcription…"
                     transcription = direct.terminer()   # None : le direct a pris trop de retard
+                    if transcription is not None and pistes and not direct.entendu[INTERLOCUTEUR]:
+                        try:   # piste de l'ordinateur jamais lue par le direct mais pas muette : on refait
+                            if not silencieux(lire_audio_16k(pistes[1]), 0.001):
+                                transcription = None
+                        except Exception:
+                            pass
                     if transcription is None:
                         self.statut = "Transcription…"
                         TRAITEMENT.update(progression=0.0)
