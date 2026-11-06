@@ -828,6 +828,11 @@ def transcrire(chemin_audio, modele=None):
             raise RuntimeError(f"format audio illisible ({erreur or chemin_audio.suffix})")
         son, _ = sf.read(str(wav), dtype="float32")
     TRAITEMENT["duree_audio"] = int(len(son) / 16000)
+    # Silence complet (micro coupé, refusé ou mauvais micro choisi) : Whisper inventerait des
+    # phrases et Claude en ferait un faux compte rendu. On s'arrête avec un message clair.
+    if not len(son) or float(np.abs(son).max()) < 0.0005:
+        raise RuntimeError("le micro n'a rien capté (silence complet). Choisis le bon micro dans "
+                           "Réglages et regarde la jauge bouger avant d'enregistrer")
 
     # Whisper fait avancer notre compteur (_SuiviTranscription) au lieu d'une barre texte
     segments = whisper.transcrire(son, str(assurer_modele(modele)), CONFIG["langue"],
