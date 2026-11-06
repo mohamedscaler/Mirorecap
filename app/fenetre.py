@@ -106,6 +106,33 @@ def accepter_premier_clic():
         print(f"Premier clic : {e}", flush=True)
 
 
+def recharger_si_page_vide():
+    """Fenêtre vide (seul le fond translucide reste) : macOS a arrêté le processus qui affiche
+    la page (manque de mémoire, mise en veille…) ou le chargement a échoué. On recharge la page."""
+    try:
+        import objc
+        from PyObjCTools import AppHelper
+        from webview.platforms.cocoa import BrowserView
+
+        def webViewWebContentProcessDidTerminate_(self, webview):
+            print("Page arrêtée par macOS : rechargement", flush=True)
+            AppHelper.callLater(0.3, webview.reload)
+
+        def webView_didFailProvisionalNavigation_withError_(self, webview, navigation, erreur):
+            print(f"Chargement raté ({erreur}) : nouvel essai", flush=True)
+            AppHelper.callLater(2.0, webview.reload)
+
+        def webView_didFailNavigation_withError_(self, webview, navigation, erreur):
+            AppHelper.callLater(2.0, webview.reload)
+
+        objc.classAddMethods(BrowserView.BrowserDelegate, [
+            objc.selector(webViewWebContentProcessDidTerminate_, selector=b"webViewWebContentProcessDidTerminate:", signature=b"v@:@"),
+            objc.selector(webView_didFailProvisionalNavigation_withError_, selector=b"webView:didFailProvisionalNavigation:withError:", signature=b"v@:@@@"),
+            objc.selector(webView_didFailNavigation_withError_, selector=b"webView:didFailNavigation:withError:", signature=b"v@:@@@")])
+    except Exception as e:
+        print(f"Rechargement de la page : {e}", flush=True)
+
+
 def barre_de_titre_integree():
     """Style macOS 26 : le contenu passe sous la barre de titre (transparente), les feux
     tricolores se posent dans la barre latérale. La bande du haut reste déplaçable."""
@@ -139,6 +166,7 @@ def mettre_au_premier_plan():
 identite_macos()
 intercepter_cmd_q()
 accepter_premier_clic()
+recharger_si_page_vide()
 # Liquid Glass : la fenêtre laisse voir le bureau flouté derrière (vibrancy macOS),
 # l'interface pose ses panneaux de verre par-dessus.
 def couleur_fond():

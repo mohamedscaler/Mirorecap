@@ -1469,7 +1469,7 @@ runpy.run_path(str(max(valides, key=version) / "mcp_serveur.py"), run_name="__ma
 """, encoding="utf-8")
 
 
-def mcp_installe():
+def mcp_dans_app_claude():
     try:
         config = json.loads(CONFIG_CLAUDE_DESKTOP.read_text(encoding="utf-8"))
         return "mirorecap" in (config.get("mcpServers") or {})
@@ -1477,8 +1477,43 @@ def mcp_installe():
         return False
 
 
+def mcp_dans_claude_code():
+    try:
+        config = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
+        return "mirorecap" in (config.get("mcpServers") or {})
+    except Exception:
+        return False
+
+
+def mcp_installe():
+    """Connecté si l'app Claude OU Claude Code connaît le connecteur."""
+    return mcp_dans_app_claude() or mcp_dans_claude_code()
+
+
+def reparer_mcp():
+    """L'app Claude réécrit sa configuration quand l'utilisateur change un réglage chez elle et
+    efface alors le connecteur MiroRecap : on le remet si l'utilisateur l'avait connecté."""
+    try:
+        voulu = CONFIG.get("mcp_voulu")
+        if voulu is None:   # anciennes installations : on reprend l'état actuel
+            voulu = mcp_installe()
+            CONFIG["mcp_voulu"] = voulu
+            sauver_config(CONFIG)
+        if not voulu or mcp_dans_app_claude() or not CONFIG_CLAUDE_DESKTOP.exists():
+            return
+        config = json.loads(CONFIG_CLAUDE_DESKTOP.read_text(encoding="utf-8") or "{}")
+        ecrire_lanceur_mcp()
+        config.setdefault("mcpServers", {})["mirorecap"] = {"command": python_moteur(), "args": [str(LANCEUR_MCP)]}
+        CONFIG_CLAUDE_DESKTOP.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+        print("Connecteur MiroRecap remis dans la configuration de l'app Claude", flush=True)
+    except Exception as e:
+        print(f"Réparation du connecteur : {e}", flush=True)
+
+
 def connecter_mcp():
     """Ajoute MiroRecap aux connecteurs de l'app Claude (Mac) et de Claude Code."""
+    CONFIG["mcp_voulu"] = True
+    sauver_config(CONFIG)
     ecrire_lanceur_mcp()
     entree = {"command": python_moteur(), "args": [str(LANCEUR_MCP)]}
     # App Claude : fichier de configuration des connecteurs locaux (copie de sécurité d'abord)
@@ -1505,6 +1540,8 @@ def connecter_mcp():
 
 
 def deconnecter_mcp():
+    CONFIG["mcp_voulu"] = False
+    sauver_config(CONFIG)
     if CONFIG_CLAUDE_DESKTOP.exists():
         try:
             config = json.loads(CONFIG_CLAUDE_DESKTOP.read_text(encoding="utf-8"))
@@ -2533,6 +2570,8 @@ class App(rumps.App):
         if CONFIG.get("modele_choisi"):
             preparer_modele_en_fond()
         # L'UI de la barre de menus ne doit être modifiée que depuis le thread principal
+        self.ticks_mcp = 0
+        threading.Thread(target=reparer_mcp, daemon=True).start()
         self.timer = rumps.Timer(self.tic, 1)
         self.timer.start()
 
@@ -2823,6 +2862,9 @@ class App(rumps.App):
     # --- Barre de menus -------------------------------------------------------
 
     def tic(self, _):
+        self.ticks_mcp += 1
+        if self.ticks_mcp % 120 == 0:   # toutes les 2 min : le connecteur est-il toujours là ?
+            threading.Thread(target=reparer_mcp, daemon=True).start()
         if self.fenetre_demandee:
             self.fenetre_demandee = False
             self.ouvrir_fenetre()
