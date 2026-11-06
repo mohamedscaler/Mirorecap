@@ -109,6 +109,29 @@ def barre_de_titre_integree():
         print(f"Barre de titre : {e}", flush=True)
 
 
+def envoyer_position_feux():
+    """Donne à la page la position réelle des feux tricolores (bord droit, milieu vertical),
+    pour poser les boutons de panneaux juste à côté, à la bonne hauteur."""
+    try:
+        import webview
+        from AppKit import NSApplication
+        for f in NSApplication.sharedApplication().windows():
+            bouton = f.standardWindowButton_(2)   # NSWindowZoomButton : le dernier des trois
+            if bouton is None or not f.isVisible():
+                continue
+            r = bouton.convertRect_toView_(bouton.bounds(), None)   # coordonnées de la fenêtre, origine en bas
+            haut = f.frame().size.height
+            droite = r.origin.x + r.size.width
+            milieu = haut - (r.origin.y + r.size.height / 2)
+            print(f"Feux tricolores : bord droit {droite:.0f}, milieu {milieu:.0f}", flush=True)
+            webview.windows[0].evaluate_js(
+                "document.documentElement.style.setProperty('--feux-x','%.0fpx');"
+                "document.documentElement.style.setProperty('--feux-y','%.0fpx');" % (droite, milieu))
+            return
+    except Exception as e:
+        print(f"Position des feux tricolores : {e}", flush=True)
+
+
 def mettre_au_premier_plan():
     try:
         from AppKit import NSApplication, NSApplicationActivateIgnoringOtherApps, NSRunningApplication
@@ -149,6 +172,8 @@ def apres_demarrage(icone):
         AppHelper.callAfter(identite, icone)
         AppHelper.callAfter(barre_de_titre_integree)
         AppHelper.callLater(0.4, mettre_au_premier_plan)   # une fois la fenêtre affichée
+        for delai in (1.0, 3.0):   # la page met un instant à charger : on envoie deux fois
+            AppHelper.callLater(delai, envoyer_position_feux)
     except Exception:
         pass
     threading.Thread(target=surveiller_app, daemon=True).start()

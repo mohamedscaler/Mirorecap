@@ -42,6 +42,8 @@ import soundfile as sf
 import plateforme
 from plateforme import systeme, audio, whisper
 
+time_monotonic = time.monotonic   # le callback audio a un paramètre nommé « time » qui masque le module
+
 # ---------------------------------------------------------------------------
 # Configuration (stockée hors du dossier partageable : chacun a sa clé)
 # ---------------------------------------------------------------------------
@@ -299,8 +301,23 @@ class Enregistreur:
         self._file = queue.Queue()
         self._flux = None
         self._ecrivain = None
+        self.niveau_micro = 0.0
+        self.dernier_pic_sature = 0.0
+        self.systeme = None
+        self._capture = None
+
+    def niveaux(self):
+        """Niveaux en direct (0 à 1) du micro et de la capture du son du Mac, pour les jauges."""
+        systeme = {"etat": SON_SYSTEME.get("etat", ""), "niveau": 0.0, "vivant": False}
+        if self._capture is not None and self.systeme is not None:
+            systeme["vivant"] = self._capture.poll() is None
+            if systeme["vivant"]:
+                systeme["niveau"] = audio.niveau_capture(self.systeme)
+        return {"enregistrement": self.actif, "micro": round(self.niveau_micro, 3),
+                "sature": time_monotonic() - self.dernier_pic_sature < 1.5, "systeme": systeme}
 
     def demarrer(self):
+        self.niveau_micro = 0.0
         peripherique = micro_choisi()
         try:
             frequence = int(sd.query_devices(peripherique if peripherique is not None else None, kind="input")["default_samplerate"])
@@ -326,6 +343,10 @@ class Enregistreur:
 
         def callback(indata, frames, time, status):
             file_attente.put(indata.copy())
+            pic = float(np.abs(indata).max()) / 32768.0
+            self.niveau_micro = max(pic, self.niveau_micro * 0.85)   # retombe doucement, pour une jauge lisible
+            if pic >= 0.98:
+                self.dernier_pic_sature = time_monotonic()
 
         self._arret = arret
         self.actif = True
@@ -407,6 +428,69 @@ class Enregistreur:
         return self.chemin, self.debut, finaliser
 
 
+class Moniteur:
+    """Écoute le micro SANS enregistrer, pour régler le volume avant un appel (jauge en direct)."""
+
+    def __init__(self):
+        self.flux = None
+        self.niveau = 0.0
+        self.dernier_pic_sature = 0.0
+        self.minuteur = None
+
+    @property
+    def actif(self):
+        return self.flux is not None
+
+    def demarrer(self, duree=30):
+        if self.flux is not None or (Api.app and Api.app.enreg.actif):
+            return
+        peripherique = micro_choisi()
+        frequence = int(sd.query_devices(peripherique, kind="input")["default_samplerate"])
+        self.niveau = 0.0
+
+        def callback(indata, frames, temps, statut):
+            pic = float(np.abs(indata).max())
+            self.niveau = max(pic, self.niveau * 0.85)
+            if pic >= 0.98:
+                self.dernier_pic_sature = time_monotonic()
+
+        if Api.app:
+            Api.app.test_micro_en_cours = True   # sinon la détection d'appel croirait qu'une autre app écoute
+        self.flux = sd.InputStream(device=peripherique, samplerate=frequence, channels=1, dtype="float32", callback=callback)
+        self.flux.start()
+        self.minuteur = threading.Timer(duree, self.arreter)
+        self.minuteur.daemon = True
+        self.minuteur.start()
+
+    def arreter(self):
+        flux, self.flux = self.flux, None
+        if self.minuteur:
+            self.minuteur.cancel()
+        if flux is not None:
+            try:
+                flux.stop()
+                flux.close()
+            except Exception as e:
+                print(f"Arrêt du moniteur : {e}", flush=True)
+            if Api.app:
+                threading.Timer(3, lambda: setattr(Api.app, "test_micro_en_cours", False)).start()
+        self.niveau = 0.0
+
+    def niveaux(self):
+        return {"enregistrement": False, "moniteur": self.actif, "micro": round(self.niveau, 3),
+                "sature": time_monotonic() - self.dernier_pic_sature < 1.5,
+                "systeme": {"etat": SON_SYSTEME.get("etat", ""), "niveau": 0.0, "vivant": False}}
+
+
+MONITEUR = Moniteur()
+
+
+def niveaux_en_direct():
+    if Api.app and Api.app.enreg.actif:
+        return dict(Api.app.enreg.niveaux(), moniteur=False)
+    return MONITEUR.niveaux()
+
+
 def tester_micro():
     """Enregistre 1,5 s au micro (déclenche la demande d'autorisation la première fois)
     et dit si du son arrive."""
@@ -415,9 +499,9 @@ def tester_micro():
             Api.app.test_micro_en_cours = True
         peripherique = micro_choisi()
         frequence = int(sd.query_devices(peripherique, kind="input")["default_samplerate"])
-        audio = sd.rec(int(frequence * 1.5), samplerate=frequence, channels=1, dtype="float32", device=peripherique)
+        signal_micro = sd.rec(int(frequence * 1.5), samplerate=frequence, channels=1, dtype="float32", device=peripherique)
         sd.wait()
-        niveau = float(np.abs(audio).max()) if audio.size else 0.0
+        niveau = float(np.abs(signal_micro).max()) if signal_micro.size else 0.0
     except Exception as e:
         return {"ok": False, "message": f"Micro inaccessible : {e}"}
     finally:
@@ -2260,6 +2344,7 @@ class Api(http.server.BaseHTTPRequestHandler):
                 "/api/projet": lambda: lire_projet(q.get("nom", "")),
                 "/api/reglages": lire_reglages,
                 "/api/micros": lambda: micros_actuels(rafraichir=True),
+                "/api/niveaux": niveaux_en_direct,
             }
             if url.path not in routes:
                 return self._json(404, {"erreur": "introuvable"})
@@ -2293,7 +2378,14 @@ class Api(http.server.BaseHTTPRequestHandler):
                 else:
                     connecter_chatgpt()
                 return self._json(200, lire_reglages())
+            if self.path == "/api/moniteur":
+                if d.get("actif"):
+                    MONITEUR.demarrer()
+                else:
+                    MONITEUR.arreter()
+                return self._json(200, niveaux_en_direct())
             if self.path == "/api/test-micro":
+                MONITEUR.arreter()
                 return self._json(200, tester_micro())
             if self.path == "/api/test-son":
                 return self._json(200, tester_son_systeme())

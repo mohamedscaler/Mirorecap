@@ -749,7 +749,7 @@
   .bouton.principal:hover { background: linear-gradient(#2680F0, #095FE0); }
 
   /* ============ Panneaux : repliables et redimensionnables ============ */
-  body, body.fenetre-mac { --haut: 46px; --larg-barre: 248px; --larg-liste: 300px; }
+  body, body.fenetre-mac { --haut: 40px; --larg-barre: 248px; --larg-liste: 300px; }
   body { grid-template-columns: var(--larg-barre) 1fr; transition: grid-template-columns .22s cubic-bezier(.3, .7, .3, 1); }
   body.barre-masquee { grid-template-columns: 0 1fr; }
   body.glisse { transition: none; }
@@ -762,16 +762,35 @@
   #vue-comptes-rendus { position: relative; }
 
   .bouton-panneau {
-    position: fixed; top: 11px; z-index: 50; width: 28px; height: 28px; border-radius: 8px;
+    position: fixed; top: 2px; z-index: 50; width: 26px; height: 26px; border-radius: 7px;
     display: grid; place-items: center; color: var(--second);
   }
   .bouton-panneau:hover { background: var(--survol); color: var(--texte); }
-  .bouton-panneau[aria-pressed="true"] { color: var(--bleu); }
+  .bouton-panneau svg { width: 15px; height: 15px; opacity: .85; }
+  .bouton-panneau[aria-pressed="false"] svg { opacity: .55; }
   #bascule-barre { left: 12px; }
-  #bascule-liste { left: 44px; }
-  body.fenetre-mac #bascule-barre { left: 84px; }
-  body.fenetre-mac #bascule-liste { left: 116px; }
+  #bascule-liste { left: 40px; }
+  /* Position réelle des feux tricolores, envoyée par la fenêtre (--feux-x : bord droit du bouton vert ; --feux-y : milieu) */
+  body.fenetre-mac .bouton-panneau { top: calc(var(--feux-y, 14px) - 13px); }
+  body.fenetre-mac #bascule-barre { left: calc(var(--feux-x, 66px) + 14px); }
+  body.fenetre-mac #bascule-liste { left: calc(var(--feux-x, 66px) + 44px); }
 
+  .enregistreur-liste { flex-wrap: wrap; }
+  .enregistreur-liste .niveaux { flex: 1 0 100%; padding: 2px 4px 0; }
+  .niveaux { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+  .niveau { display: grid; grid-template-columns: 74px 1fr auto; align-items: center; gap: 8px; font-size: 11px; color: var(--second); }
+  .niveau .nom { white-space: nowrap; }
+  .niveau .etat { min-width: 0; max-width: 150px; text-align: right; white-space: normal; line-height: 1.2; }
+  .jauge { height: 6px; border-radius: 3px; background: var(--capsule); overflow: hidden; position: relative; }
+  .jauge i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--vert); transition: width .1s linear, background .2s; }
+  .niveau.faible i { background: var(--orange); }
+  .niveau.sature i { background: var(--rouge); }
+  .niveau.faible .etat { color: var(--orange); }
+  .niveau.sature .etat { color: var(--rouge); }
+  .niveau.ok .etat { color: var(--vert); }
+  .niveau.coupe i { width: 0 !important; }
+  #moniteur .niveau { grid-template-columns: 60px 1fr auto; }
+  #micro-choix { width: auto; max-width: 52%; min-width: 180px; flex-shrink: 0; text-overflow: ellipsis; }
   .poignee { position: fixed; top: 0; bottom: 0; width: 11px; margin-left: -5px; cursor: col-resize; z-index: 40; touch-action: none; }
   .poignee::after { content: ""; position: absolute; top: 12px; bottom: 12px; left: 4px; width: 3px; border-radius: 2px; background: var(--bleu); opacity: 0; transition: opacity .15s; }
   .poignee:hover::after, .poignee.active::after { opacity: .55; }
@@ -888,6 +907,10 @@
             <span class="onde" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></span>
           </button>
           <p id="statut" class="statut" aria-live="polite">Prêt à enregistrer</p>
+          <div id="niveaux" class="niveaux" hidden>
+            <div class="niveau"><span class="nom">Micro</span><span class="jauge"><i></i></span><span class="etat" data-n="micro"></span></div>
+            <div class="niveau"><span class="nom">Son du Mac</span><span class="jauge"><i></i></span><span class="etat" data-n="systeme"></span></div>
+          </div>
         </section>
         <div class="recherche">
           <svg width="13" height="13"><use href="#i-loupe"/></svg>
@@ -1040,8 +1063,21 @@
 
         <p class="titre-groupe">Enregistrement</p>
         <div class="groupe">
+          <div class="rang">
+            <div class="corps"><div>Entrée (micro)</div><div id="micro-etat" class="d">Celui du système</div></div>
+            <select id="micro-choix" aria-label="Micro utilisé pour enregistrer"></select>
+          </div>
+          <div class="rang colonne" id="moniteur">
+            <div class="niveaux" style="width:100%">
+              <div class="niveau"><span class="nom">Volume</span><span class="jauge"><i></i></span><span class="etat" data-n="micro">Parle pour voir le niveau</span></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;width:100%;gap:10px">
+              <div class="d" id="moniteur-etat">Écoute le micro sans enregistrer, pour régler le volume avant un appel</div>
+              <button class="bouton" type="button" id="moniteur-bouton">Écouter</button>
+            </div>
+          </div>
           <div id="son-systeme" class="rang cliquable" role="switch" tabindex="0" aria-checked="true">
-            <div class="corps"><div>Son de l'ordinateur</div><div id="son-systeme-etat" class="d">Capte aussi la voix de tes interlocuteurs en visio</div></div>
+            <div class="corps"><div>Sortie (son de l'ordinateur)</div><div id="son-systeme-etat" class="d">Capte aussi la voix de tes interlocuteurs en visio</div></div>
             <span class="interrupteur" aria-hidden="true"></span>
           </div>
         </div>
@@ -1391,6 +1427,9 @@
     $("#rec").setAttribute("aria-label", e.enregistrement ? "Arrêter" : "Enregistrer");
     $("#rec-texte").textContent = e.enregistrement ? "Arrêter et analyser" : "Enregistrer";
     $("#enregistreur").classList.toggle("enregistre", e.enregistrement);
+    window.__enregistrementActif = !!e.enregistrement;
+    $("#niveaux").hidden = !e.enregistrement;
+    suivreNiveaux(!!e.enregistrement || moniteurActif);
     if (e.enregistrement && window.panneaux) panneaux.montrerListe();   // le bouton Arrêter ne doit jamais être caché
     const m = String(Math.floor(e.duree / 60)).padStart(2, "0");
     const s = String(e.duree % 60).padStart(2, "0");
@@ -1664,7 +1703,7 @@
   const marquerFenetre = () => document.body.classList.add("fenetre-mac");
   if (window.pywebview) marquerFenetre(); else window.addEventListener("pywebviewready", marquerFenetre);
   // La vue web recouvre la barre de titre : la bande du haut déplace la fenêtre (double-clic : agrandir)
-  const dansBandeHaut = (ev) => document.body.classList.contains("fenetre-mac") && ev.button === 0 && ev.clientY < 46
+  const dansBandeHaut = (ev) => document.body.classList.contains("fenetre-mac") && ev.button === 0 && ev.clientY < 40
     && !ev.target.closest("button, a, input, select, textarea, [role=separator], dialog");
   document.addEventListener("mousedown", (ev) => {
     if (dansBandeHaut(ev) && ev.detail === 1 && window.pywebview?.api?.deplacer) window.pywebview.api.deplacer();
@@ -2058,6 +2097,7 @@
         <div class="corps"><div>${d.nom}</div></div>
         <span class="coche">${icone("i-coche", 15)}</span>
       </div>`).join("");
+    remplirMicros(r);
     $("#son-systeme").setAttribute("aria-checked", r.son_systeme);
     $("#maj-auto").setAttribute("aria-checked", r.maj_auto);
     $("#quitter-fermeture").setAttribute("aria-checked", r.quitter_a_la_fermeture);
@@ -2097,6 +2137,90 @@
       $("#son-systeme-etat").textContent = actif ? "Activé · s'applique au prochain enregistrement" : "Désactivé · seul ton micro est enregistré";
     } catch (err) { message(err.message); }
   }
+  // Niveaux en direct : micro (volume d'entrée) et capture du son du Mac
+  const niveauxEtat = { minuteur: null, pic: 0, depuis: 0, silenceSysteme: 0, debutEcoute: Date.now() };
+  function afficherJauge(ligne, valeur, classe, texte) {
+    ligne.classList.remove("faible", "sature", "ok", "coupe");
+    if (classe) ligne.classList.add(classe);
+    ligne.querySelector("i").style.width = Math.min(100, Math.round(Math.sqrt(valeur) * 100)) + "%";   // échelle douce : les voix basses restent visibles
+    const t = ligne.querySelector(".etat"); if (texte !== undefined) t.textContent = texte;
+  }
+  function majNiveaux(n) {
+    const maintenant = Date.now();
+    if (n.micro > niveauxEtat.pic || maintenant - niveauxEtat.depuis > 6000) { niveauxEtat.pic = n.micro; niveauxEtat.depuis = maintenant; }
+    const ecoute = n.enregistrement || n.moniteur;
+    let classe = "", texte = "";
+    if (n.sature) { classe = "sature"; texte = "Trop fort : baisse le volume d'entrée"; }
+    else if (niveauxEtat.pic < 0.02 && maintenant - niveauxEtat.debutEcoute > 4000) { classe = "faible"; texte = "Quasi muet : vérifie le micro choisi"; }
+    else if (niveauxEtat.pic < 0.08 && maintenant - niveauxEtat.debutEcoute > 4000) { classe = "faible"; texte = "Faible : parle plus fort ou monte le volume"; }
+    else if (niveauxEtat.pic >= 0.08) { classe = "ok"; texte = "Niveau correct"; }
+    else texte = "Écoute…";
+    document.querySelectorAll('.niveau [data-n="micro"]').forEach((el) => {
+      const ligne = el.closest(".niveau");
+      if (ligne.closest("#niveaux") && !n.enregistrement) return;
+      if (ligne.closest("#moniteur") && !ecoute) return;
+      afficherJauge(ligne, n.micro, classe, texte);
+    });
+    // Son du Mac (uniquement pendant un enregistrement)
+    const ligneSys = document.querySelector('#niveaux [data-n="systeme"]')?.closest(".niveau");
+    if (ligneSys && n.enregistrement) {
+      const s = n.systeme || {};
+      if (s.niveau > 0.003) niveauxEtat.silenceSysteme = maintenant;
+      if (s.etat === "off") afficherJauge(ligneSys, 0, "coupe", "Désactivé");
+      else if (s.etat === "refusee") afficherJauge(ligneSys, 0, "faible", "Refusé par macOS");
+      else if (s.etat === "indisponible") afficherJauge(ligneSys, 0, "faible", "Outil absent");
+      else if (!s.vivant) afficherJauge(ligneSys, 0, "faible", "Capture arrêtée");
+      else if (maintenant - niveauxEtat.silenceSysteme < 1500) afficherJauge(ligneSys, s.niveau, "ok", "Capte le son du Mac");
+      else afficherJauge(ligneSys, s.niveau, "", maintenant - niveauxEtat.debutEcoute > 8000 ? "Actif · rien ne joue" : "Actif");
+    }
+  }
+  async function sonderNiveaux() {
+    try { majNiveaux(await api("/api/niveaux")); } catch (_) {}
+  }
+  function suivreNiveaux(actif) {
+    if (actif && !niveauxEtat.minuteur) {
+      niveauxEtat.debutEcoute = Date.now(); niveauxEtat.pic = 0; niveauxEtat.silenceSysteme = 0;
+      niveauxEtat.minuteur = setInterval(sonderNiveaux, 200);
+    } else if (!actif && niveauxEtat.minuteur) {
+      clearInterval(niveauxEtat.minuteur); niveauxEtat.minuteur = null;
+    }
+  }
+  let moniteurActif = false;
+  async function basculerMoniteur(actif) {
+    try {
+      await api("/api/moniteur", { actif });
+      moniteurActif = actif;
+    } catch (e) { $("#moniteur-etat").textContent = "Impossible d'écouter : " + e.message; return; }
+    $("#moniteur-bouton").textContent = actif ? "Arrêter" : "Écouter";
+    $("#moniteur-etat").textContent = actif ? "Parle comme pendant un appel : la barre doit rester verte, sans toucher le bout" : "Écoute le micro sans enregistrer, pour régler le volume avant un appel";
+    if (!actif) document.querySelector("#moniteur .jauge i").style.width = "0";
+    suivreNiveaux(actif || !!window.__enregistrementActif);
+  }
+  document.addEventListener("click", (ev) => { if (ev.target.id === "moniteur-bouton") basculerMoniteur(!moniteurActif); });
+  window.addEventListener("hashchange", () => { if (moniteurActif && location.hash !== "#reglages") basculerMoniteur(false); });
+
+  function remplirMicros(r) {
+    const choix = $("#micro-choix");
+    const options = [`<option value="">Par défaut du système${r.micro_defaut ? " · " + r.micro_defaut : ""}</option>`]
+      .concat(r.micros.map((m) => `<option value="${m.id.replace(/"/g, "&quot;")}">${m.nom.replace(/</g, "&lt;")}</option>`));
+    // Micro choisi mais débranché : on le garde visible pour ne pas changer en silence
+    if (r.micro && !r.micros.some((m) => m.id === r.micro)) options.push(`<option value="${r.micro.replace(/"/g, "&quot;")}">${r.micro.replace(/</g, "&lt;")} (débranché)</option>`);
+    choix.innerHTML = options.join("");
+    choix.value = r.micro || "";
+    const absent = r.micro && !r.micros.some((m) => m.id === r.micro);
+    $("#micro-etat").textContent = absent ? "Débranché : le micro du système est utilisé" : "S'applique au prochain enregistrement";
+  }
+  $("#micro-choix").addEventListener("focus", async () => {   // relit la liste : un casque branché depuis apparaît
+    try { remplirMicros(await api("/api/micros")); } catch (_) {}
+  });
+  $("#micro-choix").addEventListener("change", async (ev) => {
+    try {
+      const etaitActif = moniteurActif;
+      if (etaitActif) await basculerMoniteur(false);
+      remplirMicros(await api("/api/reglages", { micro: ev.target.value }));
+      if (etaitActif) await basculerMoniteur(true);
+    } catch (e) { $("#micro-etat").textContent = "Erreur : " + e.message; }
+  });
   $("#son-systeme").addEventListener("click", basculerSonSysteme);
   $("#son-systeme").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); basculerSonSysteme(); }

@@ -41,3 +41,29 @@ def lancer_capture(fichier):
 
 def jouer_son_test():
     subprocess.run(["afplay", "/System/Library/Sounds/Glass.aiff"], check=False, timeout=5)
+
+
+def niveau_capture(fichier):
+    """Niveau (0 à 1) du son du Mac : pic des ~0,1 dernières secondes du WAV en cours d'écriture
+    (16 bits mono). 0 si le fichier n'existe pas encore ou ne grandit pas."""
+    import struct
+    try:
+        taille = os.path.getsize(fichier)
+        with open(fichier, "rb") as f:
+            debut = f.read(8192)
+            pos = debut.find(b"data")
+            if pos < 0:
+                return 0.0
+            origine = pos + 8   # début des échantillons
+            lecture = 9600      # 0,1 s à 48 kHz en 16 bits
+            depart = max(origine, taille - lecture)
+            depart = origine + ((depart - origine) // 2) * 2   # reste aligné sur les échantillons
+            f.seek(depart)
+            donnees = f.read(taille - depart)
+        n = len(donnees) // 2
+        if n == 0:
+            return 0.0
+        valeurs = struct.unpack("<%dh" % n, donnees[:n * 2])
+        return round(max(abs(v) for v in valeurs) / 32768.0, 3)
+    except Exception:
+        return 0.0
