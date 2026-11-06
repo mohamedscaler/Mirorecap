@@ -760,6 +760,21 @@
   .colonne-liste { width: var(--larg-liste); min-width: 0; flex-shrink: 0; }
   body.liste-masquee .colonne-liste { display: none; }
   #vue-comptes-rendus { position: relative; }
+  /* Transcription en direct : panneau flottant pendant l'enregistrement */
+  .direct {
+    position: absolute; right: 20px; bottom: 20px; z-index: 20; width: min(520px, 46%); max-height: 46%;
+    display: flex; flex-direction: column; border-radius: 16px; padding: 12px 14px 10px;
+    background: var(--verre-fort); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%);
+    box-shadow: inset 0 0 0 1px var(--verre-bord), var(--ombre-flottante, 0 10px 32px rgba(0,0,0,.18));
+  }
+  .direct .entete-direct { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
+  .direct .entete-direct .point-rouge { width: 8px; height: 8px; border-radius: 50%; background: var(--rouge); animation: clignote 1.4s ease-in-out infinite; }
+  @keyframes clignote { 50% { opacity: .3; } }
+  .direct .info { margin-left: auto; font-weight: 400; font-size: 11px; color: var(--second); }
+  .direct .texte-direct { overflow-y: auto; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; color: var(--texte); }
+  .direct .texte-direct .qui { font-weight: 600; }
+  .direct .texte-direct .heure { color: var(--second); font-variant-numeric: tabular-nums; margin-right: 4px; }
+  .direct .attente { color: var(--second); }
 
   .bouton-panneau {
     position: fixed; top: 2px; z-index: 50; width: 26px; height: 26px; border-radius: 7px;
@@ -936,6 +951,10 @@
       </div>
       <p id="liste-vide" class="vide" hidden>Aucun compte rendu pour l'instant.<br>Lance un enregistrement ou dépose un audio dans le dossier d'import.</p>
     </div>
+    <aside id="direct" class="direct" hidden aria-label="Transcription en direct">
+      <div class="entete-direct"><span class="point-rouge" aria-hidden="true"></span>En direct<span id="direct-info" class="info"></span></div>
+      <div id="direct-texte" class="texte-direct" aria-live="off"><span class="attente">Le texte apparaît par morceaux de 10 à 30 secondes…</span></div>
+    </aside>
     <article id="lecteur" class="lecteur selectionnable">
       <div class="vide-lecteur"><div><svg width="40" height="40"><use href="#i-doc"/></svg>Choisis un compte rendu</div></div>
     </article>
@@ -1083,6 +1102,10 @@
           </div>
           <div id="son-systeme" class="rang cliquable" role="switch" tabindex="0" aria-checked="true">
             <div class="corps"><div>Sortie (son de l'ordinateur)</div><div id="son-systeme-etat" class="d">Capte aussi la voix de tes interlocuteurs en visio</div></div>
+            <span class="interrupteur" aria-hidden="true"></span>
+          </div>
+          <div id="transcription-direct" class="rang cliquable" role="switch" tabindex="0" aria-checked="true">
+            <div class="corps"><div>Transcription en direct</div><div class="d">Le texte s'affiche pendant l'appel et le compte rendu arrive plus vite. Désactive-la si ton Mac rame pendant les appels.</div></div>
             <span class="interrupteur" aria-hidden="true"></span>
           </div>
         </div>
@@ -1432,6 +1455,7 @@
     $("#rec").setAttribute("aria-label", e.enregistrement ? "Arrêter" : "Enregistrer");
     $("#rec-texte").textContent = e.enregistrement ? "Arrêter et analyser" : "Enregistrer";
     $("#enregistreur").classList.toggle("enregistre", e.enregistrement);
+    suivreDirect(e.enregistrement);
     window.__enregistrementActif = !!e.enregistrement;
     $("#niveaux").hidden = !e.enregistrement;
     suivreNiveaux(!!e.enregistrement || moniteurActif);
@@ -1575,6 +1599,31 @@
       if (!$("#vue-comptes-rendus").hidden) { selection = null; chargerComptesRendus(); }
     }
     dernierConnu = cle;
+  }
+
+  // Transcription en direct : sondée toutes les 2 s pendant l'enregistrement
+  const direct = { minuteur: null, texte: null };
+  function suivreDirect(actif) {
+    if (actif && !direct.minuteur) { sonderDirect(); direct.minuteur = setInterval(sonderDirect, 2000); }
+    if (!actif && direct.minuteur) { clearInterval(direct.minuteur); direct.minuteur = null; $("#direct").hidden = true; direct.texte = null; }
+  }
+  async function sonderDirect() {
+    let d;
+    try { d = await api("/api/direct"); } catch (_) { return; }
+    if (!d.mode || !etat || !etat.enregistrement) { $("#direct").hidden = true; return; }
+    $("#direct").hidden = false;
+    $("#direct-info").textContent = d.mode === "fin" ? "Mac occupé : la transcription se fera à la fin"
+      : d.retard > 15 ? `${d.retard} s de retard` : "";
+    if (d.texte === direct.texte) return;
+    direct.texte = d.texte;
+    const zone = $("#direct-texte");
+    const enBas = zone.scrollHeight - zone.scrollTop - zone.clientHeight < 40;   // on ne fait défiler que si l'utilisateur lit la fin
+    zone.innerHTML = d.texte ? d.texte.split("\n").map((ligne) => {
+      const m = ligne.match(/^\[(\d+:\d+)\] (?:(Moi|Interlocuteur) : )?(.*)$/);
+      if (!m) return `<div>${esc(ligne)}</div>`;
+      return `<div><span class="heure">${m[1]}</span>${m[2] ? `<span class="qui">${m[2]} :</span> ` : ""}${esc(m[3])}</div>`;
+    }).join("") : '<span class="attente">Le texte apparaît par morceaux de 10 à 30 secondes…</span>';
+    if (enBas) zone.scrollTop = zone.scrollHeight;
   }
 
   async function sonder() {
@@ -2104,6 +2153,7 @@
       </div>`).join("");
     remplirMicros(r);
     $("#son-systeme").setAttribute("aria-checked", r.son_systeme);
+    $("#transcription-direct").setAttribute("aria-checked", r.transcription_direct);
     $("#maj-auto").setAttribute("aria-checked", r.maj_auto);
     $("#quitter-fermeture").setAttribute("aria-checked", r.quitter_a_la_fermeture);
     if (!r.son_systeme) $("#son-systeme-etat").textContent = "Désactivé · seul ton micro est enregistré";
@@ -2227,6 +2277,17 @@
     } catch (e) { $("#micro-etat").textContent = "Erreur : " + e.message; }
   });
   $("#son-systeme").addEventListener("click", basculerSonSysteme);
+  async function basculerDirect() {
+    const actif = $("#transcription-direct").getAttribute("aria-checked") !== "true";
+    try {
+      await api("/api/reglages", { transcription_direct: actif });
+      $("#transcription-direct").setAttribute("aria-checked", actif);
+    } catch (err) { message(err.message); }
+  }
+  $("#transcription-direct").addEventListener("click", basculerDirect);
+  $("#transcription-direct").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); basculerDirect(); }
+  });
   $("#son-systeme").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); basculerSonSysteme(); }
   });

@@ -93,6 +93,8 @@ CONFIG_DEFAUT = {
     "langue": "fr",
     # Enregistre aussi le son qui sort du Mac (voix des interlocuteurs en visio)
     "son_systeme": True,
+    # Transcrit pendant l'appel (texte en direct, compte rendu plus rapide) ; à désactiver sur un Mac lent
+    "transcription_direct": True,
     # Installe les mises à jour toute seule dès qu'elles sortent (quand l'app ne fait rien)
     "maj_auto": True,
     # Fermer la fenêtre (bouton rouge) quitte aussi l'app, au lieu de la laisser dans la barre des menus
@@ -304,6 +306,7 @@ class Enregistreur:
         self.dernier_pic_sature = 0.0
         self.systeme = None
         self._capture = None
+        self.direct = None               # TranscripteurDirect de l'enregistrement en cours (ou du dernier)
 
     def niveaux(self):
         """Niveaux en direct (0 à 1) du micro et de la capture du son du Mac, pour les jauges."""
@@ -340,8 +343,17 @@ class Enregistreur:
                     except queue.Empty:
                         pass
 
+        direct = None
+        try:
+            direct = TranscripteurDirect(frequence) if direct_possible() else None
+        except Exception as e:
+            print(f"Transcription en direct indisponible : {e}", flush=True)
+        self.direct = direct
+
         def callback(indata, frames, time, status):
             file_attente.put(indata.copy())
+            if direct:
+                direct.ajouter_micro(indata.copy())
             pic = float(np.abs(indata).max()) / 32768.0
             self.niveau_micro = max(pic, self.niveau_micro * 0.85)   # retombe doucement, pour une jauge lisible
             if pic >= 0.98:
@@ -378,6 +390,8 @@ class Enregistreur:
         self.systeme = DOSSIER_CAPTURE / (self.chemin.stem + ".wav")
         self._capture = plateforme.audio.lancer_capture(self.systeme)
         capture = self._capture
+        if self.direct:
+            self.direct.brancher_systeme(self.systeme)
 
         def surveiller():
             # Un refus arrive en moins d'une seconde ; au-delà, la capture tourne
@@ -409,7 +423,7 @@ class Enregistreur:
         finally:
             self.actif = False
             self._arret.set()
-        capture, ecrivain, systeme = self._capture, self._ecrivain, self.systeme
+        capture, ecrivain, systeme, direct = self._capture, self._ecrivain, self.systeme, self.direct
 
         def finaliser():
             """Partie lente de l'arrêt (fermeture de la capture du son, fin d'écriture),
@@ -424,6 +438,7 @@ class Enregistreur:
             ecrivain.join(timeout=30)  # attend que tout soit bien écrit
             return systeme if systeme and systeme.exists() else None
 
+        finaliser.direct = direct   # transcription en direct à terminer après la finalisation
         return self.chemin, self.debut, finaliser
 
 
@@ -842,12 +857,26 @@ ERREUR_SILENCE = ("le micro n'a rien capté (silence complet). Choisis le bon mi
                   "Réglages et regarde la jauge bouger avant d'enregistrer")
 
 
-def segments_whisper(son, modele=None, debut=0.0, part=1.0, precis=False):
+VERROU_WHISPER = threading.Lock()   # un seul Whisper à la fois (direct et traitement partagent le modèle)
+
+
+class _SuiviMuet(_SuiviTranscription):
+    """Transcription en direct : ne touche pas à la barre de progression du traitement."""
+    def __init__(self, total=0, **_):
+        self.total, self.n = (total or 1), 0
+
+    def update(self, n=1):
+        pass
+
+
+def segments_whisper(son, modele=None, debut=0.0, part=1.0, precis=False, suivi=None):
     """Segments nettoyés (start, end, text) ; la barre de progression couvre debut → debut + part.
     precis (deux pistes) : début et fin calés sur les mots, et segments posés sur du silence retirés
     (Whisper en invente sur une piste presque vide, et y date mal les phrases)."""
-    segments = plateforme.whisper.transcrire(son, str(assurer_modele(modele)), CONFIG["langue"],
-                                             consigne_whisper(), suivi_partiel(debut, part), mots=precis)
+    dossier = str(assurer_modele(modele))
+    with VERROU_WHISPER:
+        segments = plateforme.whisper.transcrire(son, dossier, CONFIG["langue"], consigne_whisper(),
+                                                 suivi or suivi_partiel(debut, part), mots=precis)
     gardes = []
     for seg in nettoyer_segments(segments):
         if not seg["text"].strip():
@@ -948,6 +977,235 @@ def transcrire_deux_pistes(micro, systeme, modele=None):
     segs_micro = [] if silencieux(son_micro) else segments_whisper(son_micro, modele, 0.0, 0.5, precis=True)
     segs_systeme = segments_whisper(son_systeme, modele, 0.5, 0.5, precis=True)
     return fusionner_locuteurs(segs_micro, segs_systeme)
+
+
+# --- Transcription en direct (pendant l'enregistrement) -------------------------------------
+
+FREQ = 16000   # Whisper lit du 16 kHz mono
+
+
+def vers_16k(son, frequence):
+    """Rééchantillonne en 16 kHz (filtre anti-repliement de scipy, déjà livré avec l'app)."""
+    son = np.asarray(son, dtype="float32")
+    if frequence == FREQ or not len(son):
+        return son
+    from math import gcd
+    from scipy.signal import resample_poly
+    g = gcd(int(frequence), FREQ)
+    return resample_poly(son, FREQ // g, int(frequence) // g).astype("float32")
+
+
+class DecoupeurSilences:
+    """Accumule l'audio 16 kHz d'une piste et le coupe en morceaux de 10 à 30 s, sur un silence
+    (niveau RMS par tranches de 0,1 s). Sans silence en 30 s, coupe au moment le plus calme."""
+    TRAME, MIN_S, MAX_S = 1600, 10, 30
+
+    def __init__(self):
+        self.tampon = np.zeros(0, dtype="float32")
+        self.position = 0.0   # en secondes : début du tampon dans l'enregistrement
+
+    def ajouter(self, son):
+        self.tampon = np.concatenate([self.tampon, son])
+        morceaux = []
+        while len(self.tampon) >= self.MIN_S * FREQ:
+            coupe = self._coupe()
+            if coupe is None:
+                break
+            morceaux.append((self.position, self.tampon[:coupe]))
+            self.tampon = self.tampon[coupe:]
+            self.position += coupe / FREQ
+        return morceaux
+
+    def vider(self):
+        """Ce qui reste à l'arrêt de l'enregistrement."""
+        reste = (self.position, self.tampon) if len(self.tampon) else None
+        self.position += len(self.tampon) / FREQ
+        self.tampon = np.zeros(0, dtype="float32")
+        return reste
+
+    def _coupe(self):
+        n = len(self.tampon) // self.TRAME
+        rms = np.sqrt(np.mean(self.tampon[:n * self.TRAME].reshape(n, self.TRAME) ** 2, axis=1))
+        lisse = np.convolve(rms, np.ones(3) / 3, mode="same")   # un silence dure au moins ~0,3 s
+        seuil = max(0.004, 0.1 * float(np.percentile(rms, 95)))
+        debut, fin = self.MIN_S * 10, min(n, self.MAX_S * 10)
+        if fin > debut:
+            calmes = np.flatnonzero(lisse[debut:fin] < seuil)
+            if len(calmes):   # premier silence après 10 s : le texte arrive au plus tôt
+                return (debut + int(calmes[0])) * self.TRAME + self.TRAME // 2
+        if n >= self.MAX_S * 10:   # 30 s sans silence : au moment le plus calme des 10 dernières secondes
+            i = (self.MAX_S - 10) * 10 + int(np.argmin(lisse[(self.MAX_S - 10) * 10:self.MAX_S * 10]))
+            return i * self.TRAME + self.TRAME // 2
+        return None
+
+
+class LecteurWavEnCours:
+    """Lit au fur et à mesure un WAV 16 bits mono en cours d'écriture (piste du son de l'ordinateur)."""
+
+    def __init__(self, chemin):
+        self.chemin, self.lu, self.donnees, self.frequence = chemin, 0, None, None
+
+    def lire(self):
+        try:
+            with open(self.chemin, "rb") as f:
+                if self.donnees is None:
+                    entete = f.read(4096)
+                    fmt, pos = entete.find(b"fmt "), entete.find(b"data")
+                    if fmt < 0 or pos < 0:
+                        return None
+                    self.frequence = int.from_bytes(entete[fmt + 12:fmt + 16], "little")
+                    self.donnees = self.lu = pos + 8
+                f.seek(self.lu)
+                brut = f.read()
+        except OSError:
+            return None
+        brut = brut[:len(brut) // 2 * 2]
+        if not brut:
+            return None
+        self.lu += len(brut)
+        return vers_16k(np.frombuffer(brut, dtype="<i2").astype("float32") / 32768.0, self.frequence)
+
+
+class TranscripteurDirect:
+    """Transcrit l'enregistrement pendant qu'il a lieu : chaque piste (micro = « Moi », son de
+    l'ordinateur = « Interlocuteur ») est coupée en morceaux sur les silences, transcrits un par un
+    dans un thread de fond. Si la file prend plus de 60 s de retard (Mac trop lent), on bascule
+    en mode « à la fin » : tout sera transcrit après l'arrêt, comme avant."""
+    RETARD_MAX = 60
+
+    def __init__(self, frequence_micro):
+        self.frequence_micro = frequence_micro
+        self.blocs_micro = queue.Queue()          # blocs bruts du micro (callback audio)
+        self.lecteur_systeme = None
+        self.decoupeurs = {MOI: DecoupeurSilences(), INTERLOCUTEUR: DecoupeurSilences()}
+        self.segments = {MOI: [], INTERLOCUTEUR: []}
+        self.entendu = {MOI: False, INTERLOCUTEUR: False}
+        self.morceaux = queue.Queue()             # (qui, début en s, audio 16 kHz, heure d'arrivée)
+        self.mode = "direct"                      # ou "fin"
+        self.en_cours = None                      # heure d'arrivée du morceau en cours de transcription
+        self.au_fil = None                        # à l'arrêt : avancement (fait, total) pour la barre
+        self.verrou = threading.Lock()
+        self.arret = threading.Event()
+        self.preparateur = threading.Thread(target=self._preparer, daemon=True)
+        self.transcripteur = threading.Thread(target=self._transcrire, daemon=True)
+        self.preparateur.start()
+        self.transcripteur.start()
+
+    # --- entrées ---
+    def ajouter_micro(self, bloc):
+        self.blocs_micro.put(bloc)   # appelé par le callback audio : ne bloque jamais
+
+    def brancher_systeme(self, chemin):
+        self.lecteur_systeme = LecteurWavEnCours(chemin)
+
+    def _lire_micro(self):
+        blocs = []
+        while True:
+            try:
+                blocs.append(self.blocs_micro.get_nowait())
+            except queue.Empty:
+                break
+        if not blocs:
+            return None
+        brut = np.concatenate(blocs).reshape(-1).astype("float32") / 32768.0
+        return vers_16k(brut, self.frequence_micro)
+
+    def _deposer(self, qui, morceaux):
+        for debut, son in morceaux:
+            if self.mode != "direct":
+                return
+            if silencieux(son, 0.001 if qui == INTERLOCUTEUR else 0.0005):
+                continue   # rien à transcrire dans ce morceau
+            self.entendu[qui] = True
+            self.morceaux.put((qui, debut, son, time.time()))
+
+    def _preparer(self):
+        while True:
+            fin = self.arret.wait(1.0)
+            for qui, son in ((MOI, self._lire_micro()),
+                             (INTERLOCUTEUR, self.lecteur_systeme.lire() if self.lecteur_systeme else None)):
+                if son is not None and len(son):
+                    self._deposer(qui, self.decoupeurs[qui].ajouter(son))
+            if fin:
+                for qui, decoupeur in self.decoupeurs.items():
+                    reste = decoupeur.vider()
+                    if reste:
+                        self._deposer(qui, [reste])
+                self.morceaux.put(None)   # fin de la file
+                return
+
+    def _transcrire(self):
+        fait = 0
+        while True:
+            tache = self.morceaux.get()
+            if tache is None:
+                return
+            qui, debut, son, arrivee = tache
+            if self.mode != "direct":
+                continue
+            if not self.arret.is_set() and time.time() - arrivee > self.RETARD_MAX:
+                self.mode = "fin"
+                print("Transcription en direct trop en retard : elle se fera à la fin", flush=True)
+                continue
+            self.en_cours = arrivee
+            try:
+                segs = segments_whisper(son, precis=True, suivi=_SuiviMuet)
+            except Exception as e:
+                print(f"Transcription en direct : {e}", flush=True)
+                self.mode = "fin"
+                continue
+            finally:
+                self.en_cours = None
+            for seg in segs:
+                seg["start"] += debut
+                seg["end"] += debut
+            with self.verrou:
+                self.segments[qui].extend(segs)
+                self.segments[qui].sort(key=lambda x: x["start"])
+            fait += 1
+            if self.au_fil:
+                self.au_fil(fait)
+
+    # --- sorties ---
+    def retard(self):
+        """Secondes d'attente du morceau le plus ancien pas encore transcrit."""
+        heures = [self.en_cours] if self.en_cours else []
+        with self.morceaux.mutex:
+            heures += [t[3] for t in self.morceaux.queue if t]
+        return int(time.time() - min(heures)) if heures else 0
+
+    def texte(self):
+        with self.verrou:
+            micro, systeme = list(self.segments[MOI]), list(self.segments[INTERLOCUTEUR])
+        if not self.entendu[INTERLOCUTEUR]:   # pas de son de l'ordinateur : pas d'étiquettes, comme avant
+            return "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}" for seg in micro)
+        return fusionner_locuteurs(micro, systeme)
+
+    def etat(self):
+        return {"mode": self.mode, "texte": self.texte(), "retard": self.retard() if self.mode == "direct" else 0}
+
+    def terminer(self):
+        """À l'arrêt (pistes finalisées) : transcrit ce qui reste. Retourne la transcription,
+        ou None si le direct a basculé en mode « à la fin » (tout sera retranscrit)."""
+        self.arret.set()
+        self.preparateur.join()
+        total = self.morceaux.qsize()
+        TRAITEMENT["progression"] = 0.0 if total else None
+        self.au_fil = lambda fait: TRAITEMENT.update(progression=min(1.0, fait / max(total, 1)))
+        self.transcripteur.join()
+        TRAITEMENT["duree_audio"] = int(max(d.position for d in self.decoupeurs.values()))
+        if self.mode != "direct":
+            return None
+        if not self.entendu[MOI] and not self.entendu[INTERLOCUTEUR]:
+            raise RuntimeError(ERREUR_SILENCE)
+        return self.texte()
+
+
+def direct_possible():
+    """Transcription en direct si elle est activée et que le modèle Whisper est déjà sur le Mac
+    (pas de gros téléchargement en plein appel)."""
+    return CONFIG.get("transcription_direct", True) and modele_local(CONFIG["modele_whisper"]) is not None
+
 
 
 # ---------------------------------------------------------------------------
@@ -2338,6 +2596,7 @@ def lire_reglages():
         "claude_connecte": bool(CONFIG.get("jeton_claude_code")),
         "connexion": CONNEXION,
         "son_systeme": CONFIG.get("son_systeme", True),
+        "transcription_direct": CONFIG.get("transcription_direct", True),
         **micros,
         "maj_auto": CONFIG.get("maj_auto", True),
         "quitter_a_la_fermeture": bool(CONFIG.get("quitter_a_la_fermeture", True)),
@@ -2393,6 +2652,8 @@ def sauver_reglages(donnees):
             CONFIG["micro"] = donnees["micro"]
     if isinstance(donnees.get("son_systeme"), bool):
         CONFIG["son_systeme"] = donnees["son_systeme"]
+    if isinstance(donnees.get("transcription_direct"), bool):
+        CONFIG["transcription_direct"] = donnees["transcription_direct"]
     if "dossier_sortie" in donnees and donnees["dossier_sortie"].strip() != CONFIG.get("dossier_sortie", ""):
         CONFIG["dossier_sortie"] = donnees["dossier_sortie"].strip()
         redemarrage = True  # les chemins sont calculés au démarrage
@@ -2456,6 +2717,8 @@ class Api(http.server.BaseHTTPRequestHandler):
                 "/api/reglages": lire_reglages,
                 "/api/micros": lambda: micros_actuels(rafraichir=True),
                 "/api/niveaux": niveaux_en_direct,
+                "/api/direct": lambda: (self.app.enreg.direct.etat() if self.app.enreg.direct
+                                        else {"mode": "", "texte": "", "retard": 0}),
             }
             if url.path not in routes:
                 return self._json(404, {"erreur": "introuvable"})
@@ -3138,7 +3401,15 @@ class App:
                     assurer_modele()
                 self.statut = "Transcription…"
                 TRAITEMENT.update(etape="transcription", progression=0.0)
-                transcription = transcrire_deux_pistes(*pistes) if pistes else transcrire(chemin)
+                direct = getattr(finaliser, "direct", None) if finaliser else None
+                if direct:
+                    self.statut = "Fin de la transcription…"
+                    transcription = direct.terminer()   # None : le direct a pris trop de retard
+                    if transcription is None:
+                        self.statut = "Transcription…"
+                        TRAITEMENT.update(progression=0.0)
+                if not direct or transcription is None:
+                    transcription = transcrire_deux_pistes(*pistes) if pistes else transcrire(chemin)
                 if not transcription:
                     raise ValueError("aucune parole détectée")
                 self.statut = "Analyse…"
