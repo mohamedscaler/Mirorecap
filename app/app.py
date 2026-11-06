@@ -35,10 +35,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-import rumps
 import sounddevice as sd
 import numpy as np
 import soundfile as sf
+
+import plateforme
+from plateforme import systeme, audio, whisper
 
 # ---------------------------------------------------------------------------
 # Configuration (stockée hors du dossier partageable : chacun a sa clé)
@@ -48,7 +50,7 @@ DOSSIER_CODE = Path(__file__).resolve().parent
 # Code livré dans l'app (Contents/Resources/app). Différent de DOSSIER_CODE quand le code
 # vient d'une mise à jour téléchargée (~/Library/Application Support/MiroRecap/code/actuel)
 CODE_APP = Path(os.environ.get("MIRORECAP_CODE_APP") or DOSSIER_CODE)
-DOSSIER_APP = Path.home() / "Library" / "Application Support" / "MiroRecap"
+DOSSIER_APP = systeme.DOSSIER_APP
 
 # Mises à jour : on compare app/VERSION local avec celui de la branche main sur GitHub
 DEPOT = "mohamedscaler/Mirorecap"
@@ -59,17 +61,8 @@ VERSION = _fichier_version.read_text().strip() if _fichier_version.exists() else
 URL_DMG = f"https://github.com/{DEPOT}/releases/latest/download/MiroRecap.dmg"
 INTERVALLE_VERIF = 3600  # vérifie toutes les heures
 FICHIER_CONFIG = DOSSIER_APP / "config.json"
-ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
-
-MODELES_WHISPER = [
-    {"id": "mlx-community/whisper-small-mlx", "nom": "Normal", "taille": "environ 500 Mo",
-     "detail": "Très rapide et léger. Moins fiable sur les noms propres et les chiffres."},
-    {"id": "mlx-community/whisper-large-v3-turbo", "nom": "Turbo", "taille": "environ 1,6 Go",
-     "detail": "Précis et rapide. Recommandé pour la plupart des appels."},
-    {"id": "mlx-community/whisper-large-v3-mlx", "nom": "Pro", "taille": "environ 3 Go",
-     "detail": "Le plus précis (accents, bruit, jargon), environ deux fois plus lent."},
-]
-MODELE_RECOMMANDE = "mlx-community/whisper-large-v3-turbo"
+MODELES_WHISPER = whisper.MODELES
+MODELE_RECOMMANDE = whisper.MODELE_RECOMMANDE
 
 CONFIG_DEFAUT = {
     "cle_api_anthropic": "",
@@ -123,10 +116,8 @@ CONFIG = charger_config()
 
 if CONFIG["dossier_sortie"]:
     DOSSIER_SORTIE = Path(CONFIG["dossier_sortie"]).expanduser()
-elif ICLOUD.exists():
-    DOSSIER_SORTIE = ICLOUD / "Comptes-rendus"   # accessible depuis l'iPhone (app Fichiers)
 else:
-    DOSSIER_SORTIE = Path.home() / "Comptes-rendus"
+    DOSSIER_SORTIE = systeme.dossier_sortie_defaut()   # iCloud Drive sur Mac : visible sur l'iPhone
 
 DOSSIER_IMPORT = DOSSIER_SORTIE / "_A-traiter"
 DOSSIER_ENREG = DOSSIER_SORTIE / "_En-cours"
@@ -143,21 +134,7 @@ for _d in (DOSSIER_IMPORT, DOSSIER_ENREG, DOSSIER_ERREURS, DOSSIER_SORTIE / PROJ
 # Utilitaires
 # ---------------------------------------------------------------------------
 
-def notifier(titre, message):
-    """Notification au nom de MiroRecap (nom et logo de l'app, un clic ouvre la fenêtre).
-    Dans l'app installée, c'est le lanceur natif qui l'affiche ; jamais de script ni de Python."""
-    if os.environ.get("MIRORECAP_LANCEUR") == "1":
-        try:
-            from Foundation import NSDistributedNotificationCenter
-            NSDistributedNotificationCenter.defaultCenter().postNotificationName_object_userInfo_deliverImmediately_(
-                "fr.mirorecap.notifier", None, {"titre": titre, "message": message}, True)
-            return
-        except Exception:
-            pass
-    try:
-        rumps.notification("MiroRecap", titre, message, sound=False)
-    except Exception:
-        pass  # pas de notification plutôt qu'une notification au nom d'un autre programme
+notifier = systeme.notifier   # notification au nom de MiroRecap
 
 
 def slugifier(texte, longueur_max=60):
@@ -264,21 +241,49 @@ def derniere_release():
 
 
 def ouvrir_finder(chemin, reveler=False):
-    subprocess.run(["open", "-R", str(chemin)] if reveler else ["open", str(chemin)], check=False)
+    systeme.ouvrir(chemin, reveler)
 
 
 # ---------------------------------------------------------------------------
 # Enregistrement micro
 # ---------------------------------------------------------------------------
 
-# Outil de capture : celui livré avec la dernière mise à jour du code s'il existe, sinon celui de l'app
-CAPTURE_SYSTEME = next((c for c in (DOSSIER_CODE / "capture-systeme", CODE_APP.parent.parent / "MacOS" / "capture-systeme")
-                        if c.exists()), CODE_APP.parent.parent / "MacOS" / "capture-systeme")
 DOSSIER_CAPTURE = DOSSIER_APP / "capture"   # pistes « son système » le temps du mixage
 
 # État de la capture du son système, affiché dans la fenêtre :
 # "" (pas encore utilisée), "ok", "refusee", "off" (désactivée), "indisponible"
 SON_SYSTEME = {"etat": "", "message": ""}
+
+
+def liste_micros(rafraichir=False):
+    """Entrées audio disponibles. PortAudio fige la liste au démarrage : on la relit pour voir
+    un casque ou un micro USB branché depuis (jamais pendant un enregistrement)."""
+    if rafraichir:
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception as e:
+            print(f"Actualisation des micros : {e}", flush=True)
+    micros = []
+    for i, d in enumerate(sd.query_devices()):
+        if d["max_input_channels"] > 0:
+            micros.append({"id": d["name"], "nom": d["name"], "index": i})
+    try:
+        defaut = sd.query_devices(kind="input")["name"]
+    except Exception:
+        defaut = ""
+    return micros, defaut
+
+
+def micro_choisi():
+    """Index du micro choisi dans les réglages, ou None (= celui du système)."""
+    nom = CONFIG.get("micro", "")
+    if not nom:
+        return None
+    for m in liste_micros()[0]:
+        if m["id"] == nom:
+            return m["index"]
+    return None   # débranché : on retombe sur le micro par défaut
 
 
 class Enregistreur:
@@ -296,7 +301,12 @@ class Enregistreur:
         self._ecrivain = None
 
     def demarrer(self):
-        frequence = int(sd.query_devices(kind="input")["default_samplerate"])
+        peripherique = micro_choisi()
+        try:
+            frequence = int(sd.query_devices(peripherique if peripherique is not None else None, kind="input")["default_samplerate"])
+        except Exception:
+            peripherique = None
+            frequence = int(sd.query_devices(kind="input")["default_samplerate"])
         self.chemin = chemin_libre(DOSSIER_ENREG / f"{dt.datetime.now():%Y-%m-%d_%Hh%M}.wav")
         fichier = sf.SoundFile(self.chemin, mode="w", samplerate=frequence, channels=1, subtype="PCM_16")
 
@@ -322,8 +332,18 @@ class Enregistreur:
         self.debut = dt.datetime.now()
         self._ecrivain = threading.Thread(target=ecrire, daemon=True)
         self._ecrivain.start()
-        self._flux = sd.InputStream(samplerate=frequence, channels=1, dtype="int16", callback=callback)
-        self._flux.start()
+        try:
+            self._flux = sd.InputStream(device=peripherique, samplerate=frequence, channels=1, dtype="int16", callback=callback)
+            self._flux.start()
+        except Exception as e:
+            if peripherique is None:
+                raise
+            print(f"Micro choisi inutilisable ({e}) : micro par défaut", flush=True)
+            frequence_defaut = int(sd.query_devices(kind="input")["default_samplerate"])
+            if frequence_defaut != frequence:
+                raise RuntimeError("le micro choisi est inaccessible : choisis-en un autre dans Réglages → Enregistrement")
+            self._flux = sd.InputStream(samplerate=frequence, channels=1, dtype="int16", callback=callback)
+            self._flux.start()
         self._demarrer_son_systeme()
 
     def _demarrer_son_systeme(self):
@@ -331,15 +351,12 @@ class Enregistreur:
         if not CONFIG.get("son_systeme", True):
             SON_SYSTEME.update(etat="off", message="")
             return
-        if not CAPTURE_SYSTEME.exists():
+        if not audio.capture_disponible():
             SON_SYSTEME.update(etat="indisponible", message="Outil de capture absent (lancement hors de l'app ?)")
             return
         DOSSIER_CAPTURE.mkdir(parents=True, exist_ok=True)
         self.systeme = DOSSIER_CAPTURE / (self.chemin.stem + ".wav")
-        self._capture = subprocess.Popen(
-            [str(CAPTURE_SYSTEME), str(self.systeme)],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-        )
+        self._capture = audio.lancer_capture(self.systeme)
         capture = self._capture
 
         def surveiller():
@@ -356,9 +373,7 @@ class Enregistreur:
             deja_refusee = SON_SYSTEME["etat"] == "refusee"
             SON_SYSTEME.update(etat="refusee", message=erreur)
             if not deja_refusee:
-                notifier("Seul ton micro est enregistré",
-                         "Pour capter la voix de tes interlocuteurs en visio : Réglages Système → "
-                         "Confidentialité et sécurité → Enregistrement de l'écran et audio système → MiroRecap.")
+                notifier(*audio.TEXTE_CAPTURE_REFUSEE)
 
         threading.Thread(target=surveiller, daemon=True).start()
 
@@ -398,8 +413,9 @@ def tester_micro():
     try:
         if Api.app:
             Api.app.test_micro_en_cours = True
-        frequence = int(sd.query_devices(kind="input")["default_samplerate"])
-        audio = sd.rec(int(frequence * 1.5), samplerate=frequence, channels=1, dtype="float32")
+        peripherique = micro_choisi()
+        frequence = int(sd.query_devices(peripherique, kind="input")["default_samplerate"])
+        audio = sd.rec(int(frequence * 1.5), samplerate=frequence, channels=1, dtype="float32", device=peripherique)
         sd.wait()
         niveau = float(np.abs(audio).max()) if audio.size else 0.0
     except Exception as e:
@@ -408,8 +424,7 @@ def tester_micro():
         if Api.app:
             threading.Timer(4, lambda: setattr(Api.app, "test_micro_en_cours", False)).start()
     if niveau < 0.0005:
-        return {"ok": False, "message": "Aucun son reçu. Autorise MiroRecap dans Réglages Système → "
-                                        "Confidentialité et sécurité → Microphone, puis réessaie."}
+        return {"ok": False, "message": audio.TEXTE_MICRO_REFUSE}
     return {"ok": True, "message": "Micro OK."}
 
 
@@ -417,23 +432,20 @@ def tester_son_systeme():
     """Capture 3 s du son du Mac en jouant un son système : déclenche la demande d'autorisation
     « Enregistrement de l'écran et audio système » au nom de MiroRecap et vérifie le résultat."""
     import tempfile
-    if not CAPTURE_SYSTEME.exists():
+    if not audio.capture_disponible():
         return {"ok": False, "message": "Outil de capture absent."}
     with tempfile.TemporaryDirectory() as tmp:
         fichier = Path(tmp) / "test.wav"
-        proc = subprocess.Popen([str(CAPTURE_SYSTEME), str(fichier)], stdout=subprocess.DEVNULL,
-                                stderr=subprocess.PIPE, text=True)
+        proc = audio.lancer_capture(fichier)
         try:
             code = proc.wait(timeout=2)
             erreur = (proc.stderr.read() or "").strip()
             SON_SYSTEME.update(etat="refusee", message=erreur)
-            return {"ok": False, "message": "Pas encore autorisé. Accepte la demande de macOS (ou active MiroRecap "
-                                            "dans Réglages Système → Confidentialité et sécurité → Enregistrement "
-                                            "de l'écran et audio système), quitte et rouvre MiroRecap, puis réessaie."}
+            return {"ok": False, "message": audio.TEXTE_TEST_REFUSE}
         except subprocess.TimeoutExpired:
             pass
         for _ in range(2):
-            subprocess.run(["afplay", "/System/Library/Sounds/Glass.aiff"], check=False, timeout=5)
+            audio.jouer_son_test()
         proc.terminate()
         try:
             proc.wait(timeout=5)
@@ -462,12 +474,9 @@ def mixer_pistes(micro, systeme):
         pistes = []
         for i, source in enumerate((micro, systeme)):
             cible = Path(tmp) / f"{i}.wav"
-            r = subprocess.run(
-                ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(source), str(cible)],
-                capture_output=True, text=True,
-            )
-            if r.returncode != 0:
-                raise RuntimeError(f"conversion impossible : {r.stderr.strip()}")
+            ok, erreur = audio.convertir_wav_16k(source, cible)
+            if not ok:
+                raise RuntimeError(f"conversion impossible : {erreur}")
             pistes.append(cible)
         mix = Path(tmp) / "mix.wav"
         # Par blocs de 30 s : un appel d'une heure ne charge pas tout en mémoire
@@ -489,67 +498,8 @@ def mixer_pistes(micro, systeme):
 # Détection des appels : le micro est utilisé par une autre app (Meet, Zoom, Teams…)
 # ---------------------------------------------------------------------------
 
-APPS_VISIO = {
-    "us.zoom.xos": "Zoom", "com.microsoft.teams2": "Teams", "com.microsoft.teams": "Teams",
-    "com.apple.FaceTime": "FaceTime", "com.hnc.Discord": "Discord", "com.tinyspeck.slackmacgap": "Slack",
-    "net.whatsapp.WhatsApp": "WhatsApp", "desktop.WhatsApp": "WhatsApp", "com.cisco.webexmeetingsapp": "Webex",
-    "com.skype.skype": "Skype", "ru.keepcoder.Telegram": "Telegram", "com.google.Chrome": "Chrome",
-    "com.apple.Safari": "Safari", "company.thebrowser.Browser": "Arc", "com.brave.Browser": "Brave",
-    "org.mozilla.firefox": "Firefox", "com.microsoft.edgemac": "Edge",
-}
-NAVIGATEURS = {"Chrome", "Safari", "Arc", "Brave", "Firefox", "Edge"}
-
-
-def _fourcc(code):
-    return int.from_bytes(code.encode(), "big")
-
-
-def micro_utilise_ailleurs():
-    """True si le micro par défaut est en cours d'utilisation (par n'importe quelle app).
-    CoreAudio : kAudioDevicePropertyDeviceIsRunningSomewhere sur le micro par défaut."""
-    import ctypes
-    import ctypes.util
-
-    class Adresse(ctypes.Structure):
-        _fields_ = [("mSelector", ctypes.c_uint32), ("mScope", ctypes.c_uint32), ("mElement", ctypes.c_uint32)]
-
-    global _COREAUDIO
-    try:
-        _COREAUDIO
-    except NameError:
-        _COREAUDIO = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreAudio"))
-    lire = _COREAUDIO.AudioObjectGetPropertyData
-    lire.argtypes = [ctypes.c_uint32, ctypes.POINTER(Adresse), ctypes.c_uint32, ctypes.c_void_p,
-                     ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p]
-    lire.restype = ctypes.c_int32
-
-    glob = _fourcc("glob")
-    appareil = ctypes.c_uint32(0)
-    taille = ctypes.c_uint32(4)
-    if lire(1, ctypes.byref(Adresse(_fourcc("dIn "), glob, 0)), 0, None, ctypes.byref(taille), ctypes.byref(appareil)) != 0:
-        return False
-    actif = ctypes.c_uint32(0)
-    taille = ctypes.c_uint32(4)
-    if lire(appareil.value, ctypes.byref(Adresse(_fourcc("gone"), glob, 0)), 0, None, ctypes.byref(taille), ctypes.byref(actif)) != 0:
-        return False
-    return bool(actif.value)
-
-
-def app_de_visio():
-    """Nom de l'app de visio ouverte au premier plan (ou la plus probable), sinon None."""
-    try:
-        from AppKit import NSWorkspace
-        espace = NSWorkspace.sharedWorkspace()
-        devant = espace.frontmostApplication()
-        ouvertes = [str(a.bundleIdentifier() or "") for a in espace.runningApplications()]
-        if devant and str(devant.bundleIdentifier() or "") in APPS_VISIO:
-            nom = APPS_VISIO[str(devant.bundleIdentifier())]
-            if nom not in NAVIGATEURS:
-                return nom
-        dediees = [APPS_VISIO[b] for b in ouvertes if b in APPS_VISIO and APPS_VISIO[b] not in NAVIGATEURS]
-        return dediees[0] if dediees else None
-    except Exception:
-        return None
+micro_utilise_ailleurs = systeme.micro_utilise_ailleurs
+app_de_visio = systeme.app_de_visio
 
 
 class DetecteurAppels:
@@ -602,7 +552,7 @@ class DetecteurAppels:
 
 
 # ---------------------------------------------------------------------------
-# Transcription locale (Whisper MLX)
+# Transcription locale (Whisper : moteur choisi dans plateforme/)
 # ---------------------------------------------------------------------------
 
 # Téléchargement du modèle Whisper, suivi pour l'afficher (fenêtre + barre de menus)
@@ -622,8 +572,7 @@ def modele_local(repo):
         dossier = Path(snapshot_download(repo_id=repo, local_files_only=True))
     except Exception:
         return None
-    complet = (dossier / "config.json").exists() and any(dossier.glob("weights.*"))
-    return dossier if complet else None
+    return dossier if whisper.modele_complet(dossier) else None
 
 
 def assurer_modele(repo=None):
@@ -782,38 +731,25 @@ def transcrire(chemin_audio, modele=None):
     """Retourne la transcription horodatée : '[mm:ss] texte' par ligne.
     Au premier usage d'un modèle, ses fichiers sont téléchargés (~/.cache/huggingface)."""
     import tempfile
-    import mlx_whisper  # import tardif : lourd à charger
 
-    # afconvert est fourni avec macOS : il lit m4a, mp3, wav, caf, mp4… sans ffmpeg
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "audio.wav"
-        commande = ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(chemin_audio), str(wav)]
-        r = subprocess.run(commande, capture_output=True, text=True)
+        ok, erreur = audio.convertir_wav_16k(chemin_audio, wav)
         # Enregistrement interrompu (app fermée ou plantée) : le WAV n'a jamais été refermé et sa
         # taille est à 0 dans l'en-tête. On la recalcule, l'audio lui-même est intact.
-        if r.returncode != 0 and chemin_audio.suffix.lower() == ".wav" and reparer_wav(chemin_audio):
+        if not ok and chemin_audio.suffix.lower() == ".wav" and reparer_wav(chemin_audio):
             print(f"En-tête WAV réparé : {chemin_audio.name}", flush=True)
-            r = subprocess.run(commande, capture_output=True, text=True)
-        if r.returncode != 0:
-            raise RuntimeError(f"format audio illisible ({r.stderr.strip() or chemin_audio.suffix})")
-        audio, _ = sf.read(str(wav), dtype="float32")
-    TRAITEMENT["duree_audio"] = int(len(audio) / 16000)
+            ok, erreur = audio.convertir_wav_16k(chemin_audio, wav)
+        if not ok:
+            raise RuntimeError(f"format audio illisible ({erreur or chemin_audio.suffix})")
+        son, _ = sf.read(str(wav), dtype="float32")
+    TRAITEMENT["duree_audio"] = int(len(son) / 16000)
 
-    # Suivi de l'avancement : Whisper fait avancer notre compteur au lieu d'une barre texte
-    import types
-    module = sys.modules.get("mlx_whisper.transcribe")
-    if module is not None and hasattr(module, "tqdm"):
-        module.tqdm = types.SimpleNamespace(tqdm=_SuiviTranscription)
-    resultat = mlx_whisper.transcribe(
-        audio,
-        path_or_hf_repo=str(assurer_modele(modele)),
-        language=CONFIG["langue"],
-        verbose=False,                      # active le suivi (sans rien afficher)
-        initial_prompt=consigne_whisper(),  # vocabulaire et noms des projets
-        condition_on_previous_text=False,   # évite les boucles et les phrases inventées en série
-    )
+    # Whisper fait avancer notre compteur (_SuiviTranscription) au lieu d'une barre texte
+    segments = whisper.transcrire(son, str(assurer_modele(modele)), CONFIG["langue"],
+                                  consigne_whisper(), _SuiviTranscription)
     lignes = []
-    for seg in nettoyer_segments(resultat.get("segments", [])):
+    for seg in nettoyer_segments(segments):
         texte = seg["text"].strip()
         if texte:
             m, s = divmod(int(seg["start"]), 60)
@@ -1440,7 +1376,7 @@ def deconnecter_chatgpt():
 # --- Connecteur pour Claude (MCP) : Claude lit tes comptes rendus ------------------
 
 LANCEUR_MCP = DOSSIER_APP / "mcp.py"
-CONFIG_CLAUDE_DESKTOP = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+CONFIG_CLAUDE_DESKTOP = systeme.CONFIG_CLAUDE_DESKTOP
 
 
 def python_moteur():
@@ -1607,7 +1543,7 @@ def contenu_compte_rendu(date, transcription, analyse, ligne_audio, note=""):
 # Amélioration d'un compte rendu existant
 # ---------------------------------------------------------------------------
 
-MODELE_PRO = "mlx-community/whisper-large-v3-mlx"
+MODELE_PRO = whisper.MODELE_PRO
 
 
 def decouper(texte, taille=9000):
@@ -1749,20 +1685,8 @@ def audio_du_compte_rendu(md):
 
 
 def mettre_a_la_corbeille(chemin):
-    """Envoie un fichier dans la Corbeille du Mac (récupérable), sinon le supprime."""
-    try:
-        from Foundation import NSFileManager, NSURL
-        ok, _, _ = NSFileManager.defaultManager().trashItemAtURL_resultingItemURL_error_(
-            NSURL.fileURLWithPath_(str(chemin)), None, None)
-        if ok:
-            return
-    except Exception:
-        pass
-    corbeille = Path.home() / ".Trash"
-    if corbeille.is_dir():
-        shutil.move(str(chemin), str(chemin_libre(corbeille / chemin.name)))
-    else:
-        chemin.unlink(missing_ok=True)
+    """Envoie un fichier dans la Corbeille (récupérable), sinon le supprime."""
+    systeme.mettre_a_la_corbeille(chemin, chemin_libre)
 
 
 def marquer_audio_supprime(md, raison="supprimé"):
@@ -1842,7 +1766,7 @@ def ouvrir_dans_mail(projet, fichier):
     adresse = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", destinataire)
     lien = "mailto:" + (adresse.group(0) if adresse else "") + "?" + urllib.parse.urlencode(
         {"subject": objet, "body": corps}, quote_via=urllib.parse.quote)
-    subprocess.run(["open", lien], check=False)
+    systeme.ouvrir(lien)
     return {"ok": True}
 
 
@@ -1859,18 +1783,6 @@ def extraire_actions(texte):
     return actions
 
 
-SCRIPT_RAPPELS = """on run argv
-    set nomListe to item 1 of argv
-    set note to item 2 of argv
-    tell application "Reminders"
-        if not (exists list nomListe) then make new list with properties {name:nomListe}
-        repeat with i from 3 to count of argv
-            make new reminder in list nomListe with properties {name:(item i of argv), body:note}
-        end repeat
-    end tell
-end run"""
-
-
 def actions_vers_rappels(projet, fichier):
     """Ajoute les actions d'un compte rendu dans Rappels (liste « MiroRecap », synchronisée
     avec l'iPhone). Le texte passe en arguments séparés : aucun risque d'injection."""
@@ -1881,14 +1793,7 @@ def actions_vers_rappels(projet, fichier):
         raise ValueError("aucune action à faire dans ce compte rendu")
     premiere = texte.split("\n", 1)[0].lstrip("# ").strip()
     note = f"{projet} · {premiere}"
-    r = subprocess.run(["osascript", "-e", SCRIPT_RAPPELS, "MiroRecap", note, *actions],
-                       capture_output=True, text=True, timeout=60)
-    if r.returncode != 0:
-        erreur = r.stderr.strip()
-        if "-1743" in erreur or "not allowed" in erreur.lower() or "autoris" in erreur.lower():
-            raise ValueError("autorise MiroRecap à utiliser Rappels : Réglages Système → Confidentialité et "
-                             "sécurité → Automatisation (ou Rappels), puis réessaie")
-        raise ValueError(f"Rappels : {erreur or 'erreur inconnue'}")
+    systeme.ajouter_rappels("MiroRecap", note, actions)
     return {"ok": True, "ajoutees": len(actions)}
 
 
@@ -2215,7 +2120,14 @@ def modifier_projet(ancien, nom, description):
         fichier_desc.unlink()
 
 
+def micros_actuels(rafraichir=False):
+    occupe = bool(Api.app and (Api.app.enreg.actif or getattr(Api.app, "test_micro_en_cours", False)))
+    micros, defaut = liste_micros(rafraichir and not occupe)
+    return {"micro": CONFIG.get("micro", ""), "micros": [{"id": m["id"], "nom": m["nom"]} for m in micros], "micro_defaut": defaut}
+
+
 def lire_reglages():
+    micros = micros_actuels()
     cle = CONFIG.get("cle_api_anthropic", "")
     return {
         "cle_definie": bool(cle),
@@ -2231,6 +2143,7 @@ def lire_reglages():
         "claude_connecte": bool(CONFIG.get("jeton_claude_code")),
         "connexion": CONNEXION,
         "son_systeme": CONFIG.get("son_systeme", True),
+        **micros,
         "maj_auto": CONFIG.get("maj_auto", True),
         "quitter_a_la_fermeture": bool(CONFIG.get("quitter_a_la_fermeture", True)),
         "conservation_audio": int(CONFIG.get("conservation_audio") or 0),
@@ -2280,6 +2193,9 @@ def sauver_reglages(donnees):
         CONFIG["maj_auto"] = donnees["maj_auto"]
     if isinstance(donnees.get("quitter_a_la_fermeture"), bool):
         CONFIG["quitter_a_la_fermeture"] = donnees["quitter_a_la_fermeture"]
+    if isinstance(donnees.get("micro"), str):
+        if donnees["micro"] == "" or donnees["micro"] in {m["id"] for m in liste_micros()[0]}:
+            CONFIG["micro"] = donnees["micro"]
     if isinstance(donnees.get("son_systeme"), bool):
         CONFIG["son_systeme"] = donnees["son_systeme"]
     if "dossier_sortie" in donnees and donnees["dossier_sortie"].strip() != CONFIG.get("dossier_sortie", ""):
@@ -2343,6 +2259,7 @@ class Api(http.server.BaseHTTPRequestHandler):
                 "/api/projets": liste_projets_detaillee,
                 "/api/projet": lambda: lire_projet(q.get("nom", "")),
                 "/api/reglages": lire_reglages,
+                "/api/micros": lambda: micros_actuels(rafraichir=True),
             }
             if url.path not in routes:
                 return self._json(404, {"erreur": "introuvable"})
@@ -2372,7 +2289,7 @@ class Api(http.server.BaseHTTPRequestHandler):
                     annuler_connexion_chatgpt()
                 elif action == "ouvrir":
                     if CONNEXION_GPT.get("url", "").startswith("https://"):
-                        subprocess.run(["open", CONNEXION_GPT["url"]], check=False)
+                        systeme.ouvrir(CONNEXION_GPT["url"])
                 else:
                     connecter_chatgpt()
                 return self._json(200, lire_reglages())
@@ -2435,7 +2352,7 @@ class Api(http.server.BaseHTTPRequestHandler):
                     annuler_connexion_claude()
                 elif d.get("action") == "ouvrir":
                     if CONNEXION.get("url", "").startswith("https://"):
-                        subprocess.run(["open", CONNEXION["url"]], check=False)
+                        systeme.ouvrir(CONNEXION["url"])
                 else:
                     connecter_claude_code()
                 return self._json(200, lire_reglages())
@@ -2454,7 +2371,7 @@ class Api(http.server.BaseHTTPRequestHandler):
                 elif cible == "erreurs":
                     ouvrir_finder(DOSSIER_ERREURS)
                 elif cible == "console":
-                    subprocess.run(["open", "https://console.anthropic.com/settings/keys"], check=False)
+                    systeme.ouvrir("https://console.anthropic.com/settings/keys")
                 elif cible == "compte-rendu":
                     chemin = dossier_projet(d.get("projet", "")) / d.get("fichier", "")
                     if chemin.suffix == ".md" and chemin.exists():
@@ -2471,22 +2388,15 @@ class Api(http.server.BaseHTTPRequestHandler):
 
 
 # ---------------------------------------------------------------------------
-# App barre de menus
+# App (logique) : l'icône de la barre des menus est dans plateforme/menus_<système>.py
 # ---------------------------------------------------------------------------
-
-@rumps.notifications
-def clic_notification(_info):
-    """Clic sur une notification de MiroRecap : ouvre la fenêtre."""
-    if APP:
-        APP.ouvrir_fenetre()
-
 
 APP = None
 
 
-class App(rumps.App):
+class App:
     def __init__(self):
-        super().__init__("MiroRecap", title="🎙", quit_button=None)
+        self.interface = None            # barre des menus, branchée par __main__
         self.enreg = Enregistreur()
         self.verrou = threading.Lock()   # l'enregistrement se pilote depuis le menu ET la fenêtre
         self.file_traitement = queue.Queue()
@@ -2503,22 +2413,6 @@ class App(rumps.App):
         self.maj_infos = None
         self.derniere_amelioration = None            # comment installer la nouvelle version (derniere_release)
         self._compteur = 0
-
-        self.bouton = rumps.MenuItem("Démarrer l'enregistrement", callback=lambda _: self.basculer_enregistrement())
-        self.item_dernier = rumps.MenuItem("Dernier compte rendu : —", callback=self.ouvrir_dernier)
-        self.item_maj = rumps.MenuItem(f"Version {VERSION} · Rechercher une mise à jour", callback=self.clic_maj)
-        self.menu = [
-            self.bouton,
-            rumps.MenuItem("Ouvrir MiroRecap", callback=lambda _: self.ouvrir_fenetre()),
-            None,
-            rumps.MenuItem("Ouvrir les comptes rendus dans le Finder", callback=lambda _: ouvrir_finder(DOSSIER_SORTIE)),
-            rumps.MenuItem("Ouvrir le dossier d'import", callback=lambda _: ouvrir_finder(DOSSIER_IMPORT)),
-            None,
-            self.item_dernier,
-            None,
-            self.item_maj,
-            rumps.MenuItem("Quitter MiroRecap", callback=self.quitter),
-        ]
 
         # API locale sur un port libre choisi par le système
         Api.app = self
@@ -2569,22 +2463,16 @@ class App(rumps.App):
             sauver_config(CONFIG)
         if CONFIG.get("modele_choisi"):
             preparer_modele_en_fond()
-        # L'UI de la barre de menus ne doit être modifiée que depuis le thread principal
         self.ticks_mcp = 0
         threading.Thread(target=reparer_mcp, daemon=True).start()
-        self.timer = rumps.Timer(self.tic, 1)
-        self.timer.start()
 
-        # Clic sur l'icône de l'app alors qu'elle tourne : le lanceur envoie SIGUSR1
-        import signal
+        # Demandes du lanceur natif : ouvrir la fenêtre, ou tout arrêter
         self.fenetre_demandee = False
-        signal.signal(signal.SIGUSR1, lambda *_: setattr(self, "fenetre_demandee", True))
 
-        def sigterm(*_):
-            # Le lanceur natif envoie SIGTERM à la fermeture (Quitter du Dock, extinction du Mac…)
+        def arret():
             self.arreter_processus_fils()
             os._exit(0)
-        signal.signal(signal.SIGTERM, sigterm)
+        systeme.installer_signaux(lambda: setattr(self, "fenetre_demandee", True), arret)
 
         # Premier lancement (rien de configuré) : choix du modèle puis réglages ; ouverture par l'utilisateur : fenêtre
         if not CONFIG.get("accueil_fait") or moteur_effectif() is None:
@@ -2664,7 +2552,7 @@ class App(rumps.App):
                 time.sleep(120)
             time.sleep(INTERVALLE_VERIF)
 
-    def clic_maj(self, _):
+    def clic_maj(self):
         if self.maj:
             try:
                 self.lancer_maj()
@@ -2861,61 +2749,59 @@ class App(rumps.App):
 
     # --- Barre de menus -------------------------------------------------------
 
-    def tic(self, _):
+    def tic(self):
+        """Appelé chaque seconde par la barre des menus, sur le fil principal."""
         self.ticks_mcp += 1
         if self.ticks_mcp % 120 == 0:   # toutes les 2 min : le connecteur est-il toujours là ?
             threading.Thread(target=reparer_mcp, daemon=True).start()
         if self.fenetre_demandee:
             self.fenetre_demandee = False
             self.ouvrir_fenetre()
-
-        if self.enreg.actif:
-            m, s = divmod(int((dt.datetime.now() - self.enreg.debut).total_seconds()), 60)
-            self.title = f"🔴 {m:02d}:{s:02d}"
-            self.bouton.title = "Arrêter et analyser"
-        else:
-            if MODELE["etat"] == "telechargement":
-                self.title = f"⬇ Whisper {texte_progression()}"
-            elif self.statut:
-                self.title = f"⏳ {self.statut}"
-            else:
-                self.title = "🎙"
-            appel = getattr(self, "detecteur", None) and self.detecteur.appel
-            self.bouton.title = (f"Enregistrer l'appel {appel['app']}" if appel and appel["app"]
-                                 else "Enregistrer cet appel" if appel else "Démarrer l'enregistrement")
-
-        if self.dernier:
-            self.item_dernier.title = f"Dernier : {self.dernier['projet']} / {self.dernier['titre']}"
-
-        if self.maj_en_cours:
-            mp = self.maj_progression
-            if mp["phase"] == "telechargement" and mp["total"]:
-                pct = int(100 * mp["fait"] / mp["total"])
-                self.item_maj.title = f"Téléchargement de la mise à jour… {pct} %"
-                if not self.enreg.actif and not self.statut:
-                    self.title = f"⬇ {pct} %"
-            else:
-                self.item_maj.title = "Installation de la mise à jour…"
-        elif self.maj:
-            self.item_maj.title = f"Mettre à jour vers la version {self.maj}"
-
         # Scan du dossier d'import toutes les 5 secondes
         self._compteur += 1
         if self._compteur % 5 == 0:
             self.scanner_import()
+
+    def resume_barre(self):
+        """Textes de l'icône et du menu (titre, bouton, dernier compte rendu, mise à jour).
+        dernier et maj valent None quand il ne faut pas les changer."""
+        appel = getattr(self, "detecteur", None) and self.detecteur.appel
+        if self.enreg.actif:
+            m, s = divmod(int((dt.datetime.now() - self.enreg.debut).total_seconds()), 60)
+            titre, bouton = f"🔴 {m:02d}:{s:02d}", "Arrêter et analyser"
+        else:
+            if MODELE["etat"] == "telechargement":
+                titre = f"⬇ Whisper {texte_progression()}"
+            elif self.statut:
+                titre = f"⏳ {self.statut}"
+            else:
+                titre = "🎙"
+            bouton = (f"Enregistrer l'appel {appel['app']}" if appel and appel["app"]
+                      else "Enregistrer cet appel" if appel else "Démarrer l'enregistrement")
+        dernier = f"Dernier : {self.dernier['projet']} / {self.dernier['titre']}" if self.dernier else None
+        maj = None
+        if self.maj_en_cours:
+            mp = self.maj_progression
+            if mp["phase"] == "telechargement" and mp["total"]:
+                pct = int(100 * mp["fait"] / mp["total"])
+                maj = f"Téléchargement de la mise à jour… {pct} %"
+                if not self.enreg.actif and not self.statut:
+                    titre = f"⬇ {pct} %"
+            else:
+                maj = "Installation de la mise à jour…"
+        elif self.maj:
+            maj = f"Mettre à jour vers la version {self.maj}"
+        return {"titre": titre, "bouton": bouton, "dernier": dernier, "maj": maj}
 
     def ouvrir_fenetre(self, vue=""):
         # Une seule fenêtre : si elle est déjà ouverte, on la relance au premier plan
         if self.fenetre and self.fenetre.poll() is None:
             self.fenetre.terminate()
         url = f"http://127.0.0.1:{self.serveur.server_port}/" + (f"#{vue}" if vue else "")
-        # Python nommé « MiroRecap » (créé à la construction) : c'est ce nom qu'affiche le Dock
-        python = Path(sys.executable).with_name("MiroRecap")
-        if not python.exists():
-            python = Path(sys.executable)
+        python = systeme.python_fenetre()
         self.fenetre = subprocess.Popen([str(python), str(DOSSIER_CODE / "fenetre.py"), url, JETON])
 
-    def ouvrir_dernier(self, _):
+    def ouvrir_dernier(self):
         if self.dernier:
             ouvrir_finder(DOSSIER_SORTIE / self.dernier["projet"] / self.dernier["fichier"], reveler=True)
 
@@ -2931,8 +2817,7 @@ class App(rumps.App):
         def fermer():
             time.sleep(0.4)   # laisse la fenêtre se fermer d'abord
             try:
-                from PyObjCTools import AppHelper
-                AppHelper.callAfter(rumps.quit_application)   # sur le fil principal
+                self.interface.quitter_depuis_un_fil()   # l'arrêt se fait sur le fil principal
                 time.sleep(3)
             except Exception:
                 pass
@@ -2953,16 +2838,16 @@ class App(rumps.App):
                 except Exception:
                     pass
 
-    def quitter(self, _):
+    def quitter(self):
         self.arreter_processus_fils()
 
         def filet():
-            # rumps.quit_application() peut rester bloqué (threads natifs MLX/Whisper en cours) :
+            # L'arrêt de la barre des menus peut rester bloqué (threads natifs MLX/Whisper en cours) :
             # si l'arrêt normal n'a pas abouti au bout de 3 s, on force.
             time.sleep(3)
             os._exit(0)
         threading.Thread(target=filet, daemon=True).start()
-        rumps.quit_application()
+        self.interface.quitter()
 
     # --- Import automatique --------------------------------------------------
 
@@ -2972,18 +2857,17 @@ class App(rumps.App):
         for f in DOSSIER_IMPORT.iterdir():
             # Fichier iCloud pas encore téléchargé ('.nom.m4a.icloud') : on force le téléchargement
             if f.name.startswith(".") and f.name.endswith(".icloud"):
-                reel = f.with_name(f.name[1:-len(".icloud")])
-                if reel not in self.icloud_demandes:
-                    self.icloud_demandes.add(reel)
-                    subprocess.run(["brctl", "download", str(reel)], check=False)
+                if f not in self.icloud_demandes:
+                    self.icloud_demandes.add(f)
+                    systeme.telecharger_depuis_le_cloud(f)
                 continue
             if f.name.startswith(".") or f.suffix.lower() not in EXTENSIONS_AUDIO or f in self.en_file:
                 continue
             infos = f.stat()
             if infos.st_size > 0 and self.tailles.get(f) == infos.st_size:
                 self.en_file.add(f)
-                self.icloud_demandes.discard(f)
-                date = dt.datetime.fromtimestamp(getattr(infos, "st_birthtime", infos.st_mtime))
+                self.icloud_demandes.discard(f.with_name("." + f.name + ".icloud"))
+                date = dt.datetime.fromtimestamp(systeme.date_creation(infos))
                 self.file_traitement.put((f, date))
             else:
                 self.tailles[f] = infos.st_size
@@ -3087,45 +2971,11 @@ class App(rumps.App):
                 self.statut = ""
 
 
-def preparer_installation():
-    """Lancement au démarrage du Mac + nettoyage des anciennes versions installées par script."""
-    bundle = CODE_APP.parent.parent.parent              # …/MiroRecap.app
-    if bundle.suffix != ".app":
-        return
-    agent = Path.home() / "Library" / "LaunchAgents" / "fr.mirorecap.app.plist"
-    try:
-        agent.parent.mkdir(parents=True, exist_ok=True)
-        agent.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>fr.mirorecap.app</string>
-  <key>ProgramArguments</key>
-  <array><string>/usr/bin/open</string><string>-a</string><string>{bundle}</string><string>--args</string><string>--demarrage</string></array>
-  <key>RunAtLoad</key><true/>
-</dict>
-</plist>
-""")
-    except Exception:
-        pass
-    # Anciennes versions (installateur en Terminal) : app dans ~/Applications et Python à part.
-    # La config (clé API, réglages) est conservée.
-    ancienne = Path.home() / "Applications" / "MiroRecap.app"
-    if ancienne.exists() and ancienne.resolve() != bundle.resolve():
-        shutil.rmtree(ancienne, ignore_errors=True)
-    for nom in (".venv", "ui"):
-        shutil.rmtree(DOSSIER_APP / nom, ignore_errors=True)
-    for nom in ("app.py", "fenetre.py", "requirements.txt", "VERSION", "icone.png"):
-        (DOSSIER_APP / nom).unlink(missing_ok=True)
-
-
 if __name__ == "__main__":
-    preparer_installation()
-    # Pas d'icône dans le Dock pour ce processus : il vit dans la barre de menus
-    try:
-        from AppKit import NSApplication
-        NSApplication.sharedApplication().setActivationPolicy_(1)  # 1 = Accessory
-    except Exception:
-        pass
+    systeme.preparer_installation(CODE_APP, DOSSIER_APP)
+    systeme.cacher_du_dock()
     APP = App()
-    APP.run()
+    menus = plateforme.charger_menus()
+    APP.interface = menus.BarreMenus(APP, VERSION, lambda: ouvrir_finder(DOSSIER_SORTIE),
+                                     lambda: ouvrir_finder(DOSSIER_IMPORT))
+    APP.interface.run()

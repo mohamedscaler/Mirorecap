@@ -7,7 +7,7 @@ VERSION="$(tr -d '[:space:]' < app/VERSION)"
 MOTEUR="$(tr -d '[:space:]' < app/MOTEUR)"
 rm -rf dist/code dist/code.zip dist/maj.json
 mkdir -p dist/code
-cp -R app/app.py app/fenetre.py app/mcp_serveur.py app/demarrage.py app/VERSION app/MOTEUR app/icone.png app/ui dist/code/
+cp -R app/app.py app/fenetre.py app/mcp_serveur.py app/demarrage.py app/VERSION app/MOTEUR app/icone.png app/ui app/plateforme dist/code/
 cp install-distant.sh dist/code/
 # Outil natif de capture du son du Mac : compilé ici quand on est sur un Mac (GitHub Actions),
 # pour pouvoir le corriger avec une mise à jour légère

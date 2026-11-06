@@ -33,7 +33,7 @@ print("✓ imports OK depuis", sys.prefix)
 EOF
 
 # 3. Code de l'app
-cp -R app/demarrage.py app/MOTEUR app/app.py app/fenetre.py app/mcp_serveur.py app/VERSION app/icone.png app/ui "$RES/app/"
+cp -R app/demarrage.py app/MOTEUR app/app.py app/fenetre.py app/mcp_serveur.py app/VERSION app/icone.png app/ui app/plateforme "$RES/app/"
 cp install-distant.sh "$RES/app/"   # installateur des mises à jour, livré avec l'app
 
 # 4. Lanceur natif
