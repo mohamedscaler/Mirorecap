@@ -768,12 +768,17 @@
   .bouton-panneau:hover { background: var(--survol); color: var(--texte); }
   .bouton-panneau svg { width: 15px; height: 15px; opacity: .85; }
   .bouton-panneau[aria-pressed="false"] svg { opacity: .55; }
-  #bascule-barre { left: 12px; }
-  #bascule-liste { left: 40px; }
+  /* Boutons en haut à droite de la barre latérale (comme le Finder et Notes sur macOS 26),
+     jamais par-dessus les feux tricolores ; barre masquée : ils se rangent juste après les feux */
+  .bouton-panneau { --apres-feux: calc(var(--feux-x, 66px) + 14px); transition: left .22s cubic-bezier(.3, .7, .3, 1); }
+  body.glisse .bouton-panneau { transition: none; }
+  #bascule-barre { left: max(var(--apres-feux), calc(var(--larg-barre) - 64px)); }
+  #bascule-liste { left: max(calc(var(--apres-feux) + 28px), calc(var(--larg-barre) - 36px)); }
+  body:has(#bascule-liste[hidden]) #bascule-barre { left: max(var(--apres-feux), calc(var(--larg-barre) - 36px)); }
+  body.barre-masquee #bascule-barre { left: var(--apres-feux); }
+  body.barre-masquee #bascule-liste { left: calc(var(--apres-feux) + 28px); }
   /* Position réelle des feux tricolores, envoyée par la fenêtre (--feux-x : bord droit du bouton vert ; --feux-y : milieu) */
   body.fenetre-mac .bouton-panneau { top: calc(var(--feux-y, 14px) - 13px); }
-  body.fenetre-mac #bascule-barre { left: calc(var(--feux-x, 66px) + 14px); }
-  body.fenetre-mac #bascule-liste { left: calc(var(--feux-x, 66px) + 44px); }
 
   .enregistreur-liste { flex-wrap: wrap; }
   .enregistreur-liste .niveaux { flex: 1 0 100%; padding: 2px 4px 0; }
