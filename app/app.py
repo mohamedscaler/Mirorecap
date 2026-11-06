@@ -507,44 +507,53 @@ def tester_micro():
         if Api.app:
             threading.Timer(4, lambda: setattr(Api.app, "test_micro_en_cours", False)).start()
     if niveau < 0.0005:
-        return {"ok": False, "message": plateforme.audio.TEXTE_MICRO_REFUSE}
+        return {"ok": False, "message": plateforme.audio.TEXTE_MICRO_REFUSE, "reglage": "micro"}
     return {"ok": True, "message": "Micro OK."}
 
 
+def _niveau_wav(fichier):
+    """Niveau maximal (0 à 1) d'un WAV 16 bits mono, même en cours d'écriture."""
+    try:
+        donnees = fichier.read_bytes()
+    except OSError:
+        return 0.0
+    pos = donnees.find(b"data")
+    brut = donnees[pos + 8:] if pos >= 0 else b""
+    brut = brut[:len(brut) // 2 * 2]
+    return float(np.abs(np.frombuffer(brut, dtype="<i2").astype(np.int32)).max()) / 32768 if brut else 0.0
+
+
 def tester_son_systeme():
-    """Capture 3 s du son du Mac en jouant un son système : déclenche la demande d'autorisation
-    « Enregistrement de l'écran et audio système » au nom de MiroRecap et vérifie le résultat."""
+    """Demande l'autorisation « audio du système » (au premier essai, macOS l'affiche au nom de
+    MiroRecap) puis vérifie que le son du Mac est bien capté. Le son de test est rejoué pendant
+    20 s au plus : le temps de cliquer sur « Autoriser » dans la demande de macOS."""
     import tempfile
     if not plateforme.audio.capture_disponible():
-        return {"ok": False, "message": "Outil de capture absent."}
+        return {"ok": False, "message": "Outil de capture absent.", "reglage": ""}
+    niveau, code = 0.0, None
     with tempfile.TemporaryDirectory() as tmp:
         fichier = Path(tmp) / "test.wav"
         proc = plateforme.audio.lancer_capture(fichier)
-        try:
-            code = proc.wait(timeout=2)
-            erreur = (proc.stderr.read() or "").strip()
-            SON_SYSTEME.update(etat="refusee", message=erreur)
-            return {"ok": False, "message": plateforme.audio.TEXTE_TEST_REFUSE}
-        except subprocess.TimeoutExpired:
-            pass
-        for _ in range(2):
+        fin = time.time() + 20
+        time.sleep(1)
+        while time.time() < fin and proc.poll() is None and niveau < 0.001:
             plateforme.audio.jouer_son_test()
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            niveau = _niveau_wav(fichier)
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        else:
+            code = proc.returncode
         bilan = (proc.stderr.read() or "").strip().splitlines()
-        bilan = bilan[-1] if bilan else ""
-        print(f"Test son du Mac : {bilan}", flush=True)
-        try:
-            audio, _ = sf.read(str(fichier), dtype="float32")
-            niveau = float(np.abs(audio).max()) if len(audio) else 0.0
-        except Exception:
-            niveau = 0.0
+        print(f"Test son du Mac : {bilan[-1] if bilan else ''}", flush=True)
+    if code:   # l'outil s'est arrêté seul : macOS a refusé la capture
+        SON_SYSTEME.update(etat="refusee", message=bilan[-1] if bilan else "")
+        return {"ok": False, "message": plateforme.audio.TEXTE_TEST_REFUSE, "reglage": "audio"}
     if niveau < 0.001:
-        return {"ok": False, "message": "La capture tourne mais aucun son n'a été reçu. Vérifie que le volume "
-                                        f"du Mac n'est pas coupé, puis réessaie. ({bilan or 'aucun bloc audio'})"}
+        return {"ok": False, "message": plateforme.audio.TEXTE_TEST_SILENCE, "reglage": "audio"}
     SON_SYSTEME.update(etat="ok", message="")
     return {"ok": True, "message": "Son du Mac OK : la voix de tes interlocuteurs sera enregistrée."}
 
@@ -2466,6 +2475,8 @@ class Api(http.server.BaseHTTPRequestHandler):
                     ouvrir_finder(DOSSIER_IMPORT)
                 elif cible == "erreurs":
                     ouvrir_finder(DOSSIER_ERREURS)
+                elif cible in ("reglages-micro", "reglages-audio"):
+                    plateforme.systeme.ouvrir_reglages(cible.split("-")[1])
                 elif cible == "console":
                     plateforme.systeme.ouvrir("https://console.anthropic.com/settings/keys")
                 elif cible == "compte-rendu":

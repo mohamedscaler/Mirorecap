@@ -777,6 +777,9 @@
   body:has(#bascule-liste[hidden]) #bascule-barre { left: max(var(--apres-feux), calc(var(--larg-barre) - 36px)); }
   body.barre-masquee #bascule-barre { left: var(--apres-feux); }
   body.barre-masquee #bascule-liste { left: calc(var(--apres-feux) + 28px); }
+  /* Fenêtre Mac : la barre latérale part du coin de la fenêtre, pour que les feux tricolores
+     et les deux boutons soient DANS le panneau (sinon ils tombaient à cheval sur son bord) */
+  body.fenetre-mac .barre { margin: 0; border-radius: 0; box-shadow: inset -1px 0 0 var(--barre-bord); }
   /* Position réelle des feux tricolores, envoyée par la fenêtre (--feux-x : bord droit du bouton vert ; --feux-y : milieu) */
   body.fenetre-mac .bouton-panneau { top: calc(var(--feux-y, 14px) - 13px); }
 
@@ -1220,15 +1223,15 @@
     </section>
 
     <section class="ac-page" data-page="3" hidden>
-      <h2>Enregistrement</h2>
-      <p class="d">MiroRecap enregistre ton micro et, en visio, la voix de tes interlocuteurs (le son qui sort du Mac). macOS va te demander l'autorisation : accepte.</p>
+      <h2>Autorisations</h2>
+      <p class="d">Deux accès suffisent : ton micro, et l'audio de l'ordinateur pour la voix de tes interlocuteurs en visio. Aucun enregistrement de l'écran. Clique sur chaque bouton, puis sur « Autoriser » dans la fenêtre de macOS.</p>
       <div class="groupe">
         <div class="rang"><span id="ac-micro-point" class="point"></span>
-          <div class="corps"><div>Micro</div><div class="d" id="ac-micro-etat">Parle quelques mots pendant le test</div></div>
-          <button class="bouton" type="button" id="ac-micro">Tester</button></div>
+          <div class="corps"><div>Micro</div><div class="d" id="ac-micro-etat">Ta voix. Parle quelques mots pendant le test.</div></div>
+          <button class="bouton principal" type="button" id="ac-micro">Autoriser</button></div>
         <div class="rang"><span id="ac-son-point" class="point"></span>
-          <div class="corps"><div>Son du Mac</div><div class="d" id="ac-son-etat">Joue un son et vérifie qu'il est capté</div></div>
-          <button class="bouton" type="button" id="ac-son">Tester</button></div>
+          <div class="corps"><div>Audio des appels</div><div class="d" id="ac-son-etat">La voix de tes interlocuteurs. Un petit son va être joué.</div></div>
+          <button class="bouton principal" type="button" id="ac-son">Autoriser</button></div>
       </div>
     </section>
 
@@ -2558,17 +2561,25 @@
   // Étape 3 : tests d'enregistrement
   async function lancerTest(bouton, chemin, point, etat, attente) {
     bouton.disabled = true; $(etat).textContent = attente;
+    $(etat).parentElement.querySelector(".lien-reglages")?.remove();
     try {
       const r = await api(chemin, {});
       $(point).classList.toggle("ok", r.ok); $(point).classList.toggle("non", !r.ok);
       $(etat).textContent = r.message;
+      if (!r.ok && r.reglage) {
+        // Autorisation refusée ou jamais demandée : ouvre directement le bon écran des Réglages Système
+        const lien = document.createElement("button");
+        lien.type = "button"; lien.className = "lien lien-reglages"; lien.textContent = "Ouvrir les Réglages Système";
+        lien.addEventListener("click", () => api("/api/ouvrir", { cible: "reglages-" + r.reglage }));
+        $(etat).after(lien);
+      }
     } catch (err) { $(etat).textContent = err.message; }
     bouton.disabled = false; bouton.textContent = "Retester";
   }
   $("#rg-micro").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-micro", "#rg-micro-point", "#rg-micro-etat", "Écoute… parle maintenant"));
   $("#rg-son").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-son", "#rg-son-point", "#rg-son-etat", "Test en cours, un son va être joué…"));
-  $("#ac-micro").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-micro", "#ac-micro-point", "#ac-micro-etat", "Écoute… parle maintenant"));
-  $("#ac-son").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-son", "#ac-son-point", "#ac-son-etat", "Test en cours, un son va être joué…"));
+  $("#ac-micro").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-micro", "#ac-micro-point", "#ac-micro-etat", "Écoute… parle maintenant (accepte la demande de macOS si elle s'affiche)"));
+  $("#ac-son").addEventListener("click", (ev) => lancerTest(ev.target, "/api/test-son", "#ac-son-point", "#ac-son-etat", "Accepte la demande de macOS : le son de test est rejoué jusqu'à ce qu'il soit capté…"));
 
   // ============ Démarrage ============
   sonder();

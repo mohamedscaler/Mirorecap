@@ -6,7 +6,7 @@ Tu la pilotes depuis l'icône 🎙 de la barre de menus ou depuis sa fenêtre, o
 
 ## Ce qu'il faut
 
-- Un Mac avec puce Apple (M1 ou plus récent), sous macOS 13.5 minimum
+- Un Mac avec puce Apple (M1 ou plus récent), sous macOS 14.2 minimum
 - **Pour l'analyse par Claude, au choix :**
   - un abonnement Claude **Pro ou Max** : MiroRecap passe par Claude Code, sans clé API (recommandé) ;
   - ou une clé API Anthropic, facturée à l'usage, à créer sur [console.anthropic.com](https://console.anthropic.com).
@@ -23,8 +23,7 @@ Rien d'autre à installer : Python, Whisper et tous les modules sont dans l'app.
 Au premier lancement, la fenêtre s'ouvre sur les Réglages :
 1. **Avec ton abonnement Claude** : clique sur **Installer et connecter**. Le Terminal s'ouvre et installe Claude Code. Quand il te le demande, choisis **Claude account** et connecte-toi dans le navigateur, puis tape `/exit`.
    **Ou avec une clé API** : colle-la dans « Clé API Anthropic ».
-2. Accepte l'accès au micro et à iCloud Drive quand macOS le demande.
-   Au premier enregistrement, macOS demande aussi « Enregistrement de l'écran et audio système » : c'est ce qui capte la voix de tes interlocuteurs en visio (seul l'audio est gardé). Accepte puis relance MiroRecap.
+2. Étape « Autorisations » : clique sur les deux boutons et accepte les demandes de macOS, le **micro** (ta voix) et l'**audio du système** (la voix de tes interlocuteurs en visio, sans enregistrement de l'écran). Chaque bouton vérifie aussitôt que le son arrive. Accepte aussi l'accès à iCloud Drive si macOS le demande.
 
 MiroRecap se lance tout seul à chaque démarrage du Mac. La première transcription télécharge le modèle Whisper (internet nécessaire), donc elle prend plus de temps. Ensuite, la transcription se fait hors ligne.
 

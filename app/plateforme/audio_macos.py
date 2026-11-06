@@ -1,23 +1,26 @@
 # -*- coding: utf-8 -*-
-"""macOS : conversion audio (afconvert) et capture du son du Mac (outil natif ScreenCaptureKit)."""
+"""macOS : conversion audio (afconvert) et capture du son du Mac (outil natif, tap Core Audio)."""
 import os
 import subprocess
 from pathlib import Path
 
 DOSSIER_CODE = Path(__file__).resolve().parent.parent
 CODE_APP = Path(os.environ.get("MIRORECAP_CODE_APP") or DOSSIER_CODE)
-# Outil de capture : celui livré avec la dernière mise à jour du code s'il existe, sinon celui de l'app
+# Outil de capture : TOUJOURS celui de l'app (MiroRecap.app/Contents/MacOS). Sa signature ne change
+# pas avec les mises à jour légères : macOS garde l'autorisation « audio du système » accordée à
+# MiroRecap. (Le copier avec chaque mise à jour faisait perdre l'autorisation : capture muette.)
 _DANS_APP = CODE_APP.parent.parent / "MacOS" / "capture-systeme"
-OUTIL_CAPTURE = next((c for c in (DOSSIER_CODE / "capture-systeme", _DANS_APP) if c.exists()), _DANS_APP)
+OUTIL_CAPTURE = _DANS_APP if _DANS_APP.exists() else DOSSIER_CODE / "capture-systeme"   # hors app : développement
 
 TEXTE_MICRO_REFUSE = ("Aucun son reçu. Autorise MiroRecap dans Réglages Système → "
                       "Confidentialité et sécurité → Microphone, puis réessaie.")
+REGLAGE_AUDIO = "Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran et audio système → Enregistrement audio du système uniquement → MiroRecap"
 TEXTE_CAPTURE_REFUSEE = ("Seul ton micro est enregistré",
-                         "Pour capter la voix de tes interlocuteurs en visio : Réglages Système → "
-                         "Confidentialité et sécurité → Enregistrement de l'écran et audio système → MiroRecap.")
-TEXTE_TEST_REFUSE = ("Pas encore autorisé. Accepte la demande de macOS (ou active MiroRecap "
-                     "dans Réglages Système → Confidentialité et sécurité → Enregistrement "
-                     "de l'écran et audio système), quitte et rouvre MiroRecap, puis réessaie.")
+                         "Pour capter la voix de tes interlocuteurs en visio : " + REGLAGE_AUDIO + ".")
+TEXTE_TEST_REFUSE = ("macOS n'a pas laissé MiroRecap écouter le son du Mac. Active MiroRecap dans "
+                     + REGLAGE_AUDIO + ", puis réessaie.")
+TEXTE_TEST_SILENCE = ("Aucun son du Mac reçu. Si macOS ne t'a rien demandé, active MiroRecap dans "
+                      + REGLAGE_AUDIO + ". Sinon, vérifie que le volume n'est pas coupé, puis réessaie.")
 
 
 def convertir_wav_16k(source, cible):

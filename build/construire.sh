@@ -37,10 +37,10 @@ cp -R app/demarrage.py app/MOTEUR app/app.py app/fenetre.py app/mcp_serveur.py a
 cp install-distant.sh "$RES/app/"   # installateur des mises à jour, livré avec l'app
 
 # 4. Lanceur natif
-clang -O2 -fobjc-arc -arch arm64 -mmacosx-version-min=13.5 -framework Cocoa -framework UserNotifications -o "$APP/Contents/MacOS/MiroRecap" app/lanceur.m
-# Capture du son système (voix des interlocuteurs en visio)
-clang -O2 -fobjc-arc -arch arm64 -mmacosx-version-min=13.5 -framework Foundation -framework ScreenCaptureKit \
-  -framework CoreMedia -framework AudioToolbox -o "$APP/Contents/MacOS/capture-systeme" app/capture-systeme.m
+clang -O2 -fobjc-arc -arch arm64 -mmacosx-version-min=14.2 -framework Cocoa -framework UserNotifications -o "$APP/Contents/MacOS/MiroRecap" app/lanceur.m
+# Capture du son système (voix des interlocuteurs en visio) : tap Core Audio, macOS 14.2+
+clang -O2 -fobjc-arc -arch arm64 -mmacosx-version-min=14.2 -framework Foundation -framework CoreAudio \
+  -framework AudioToolbox -o "$APP/Contents/MacOS/capture-systeme" app/capture-systeme.m
 
 # 5. Icône
 ICONSET="dist/MiroRecap.iconset"
@@ -65,9 +65,10 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
-  <key>LSMinimumSystemVersion</key><string>13.5</string>
+  <key>LSMinimumSystemVersion</key><string>14.2</string>
   <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>MiroRecap enregistre tes appels et réunions pour les transcrire.</string>
+  <key>NSAudioCaptureUsageDescription</key><string>MiroRecap enregistre la voix de tes interlocuteurs en visio pour en faire un compte rendu.</string>
 </dict>
 </plist>
 EOF

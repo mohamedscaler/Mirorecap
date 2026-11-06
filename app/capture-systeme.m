@@ -1,155 +1,173 @@
 /*
  * capture-systeme : enregistre le son qui sort du Mac (voix des interlocuteurs en
- * visio : Meet, Zoom, Teams, FaceTime…) dans un fichier WAV mono 16 bits.
+ * visio : Meet, Zoom, Teams, FaceTime, WhatsApp…) dans un fichier WAV mono 16 bits.
  *
  * Usage : capture-systeme sortie.wav
  * - Lancé par app.py en même temps que l'enregistrement du micro.
  * - S'arrête proprement sur SIGTERM (le fichier WAV est finalisé).
- * - Code de sortie 2 : capture refusée (autorisation « Enregistrement de l'écran
- *   et de l'audio système » non accordée) ou indisponible.
+ * - Code de sortie 2 : capture impossible (pas de réponse ou refus de macOS).
  *
- * Utilise ScreenCaptureKit (macOS 13+) en audio seul : aucune image n'est conservée.
- * Lancé depuis MiroRecap.app, l'autorisation demandée est celle de MiroRecap.
+ * Utilise un « tap » Core Audio (macOS 14.2+), comme les apps de prise de notes de réunion :
+ * macOS demande seulement « Enregistrement audio du système », jamais l'enregistrement de
+ * l'écran. Cet outil est livré dans MiroRecap.app (signature stable) : macOS attribue la
+ * demande à MiroRecap et s'en souvient d'une version à l'autre.
  */
 #import <AudioToolbox/AudioToolbox.h>
-#import <CoreMedia/CoreMedia.h>
+#import <CoreAudio/AudioHardwareTapping.h>
+#import <CoreAudio/CATapDescription.h>
+#import <CoreAudio/CoreAudio.h>
 #import <Foundation/Foundation.h>
-#import <ScreenCaptureKit/ScreenCaptureKit.h>
 #include <math.h>
 #include <signal.h>
 
-@interface Capteur : NSObject <SCStreamOutput, SCStreamDelegate>
-@property(nonatomic) NSURL *url;
-@property(nonatomic) SCStream *flux;
-@end
+static AudioObjectID tap = kAudioObjectUnknown;
+static AudioObjectID agregat = kAudioObjectUnknown;
+static AudioDeviceIOProcID procedure = NULL;
+static ExtAudioFileRef fichier = NULL;
+static AudioStreamBasicDescription format;
+static long long echantillons = 0, blocs = 0;
+static float niveau = 0;
+static int erreurs = 0;
 
-@implementation Capteur {
-    ExtAudioFileRef _fichier;   // créé au premier bloc audio (on connaît alors le format exact)
-    long long _echantillons;    // diagnostic : quantité écrite et niveau maximal
-    float _niveau;
-    int _erreurs;
-}
-
-- (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)tampon ofType:(SCStreamOutputType)type {
-    if (type != SCStreamOutputTypeAudio || !CMSampleBufferDataIsReady(tampon)) return;
-    const AudioStreamBasicDescription *entree =
-        CMAudioFormatDescriptionGetStreamBasicDescription(CMSampleBufferGetFormatDescription(tampon));
-    if (!entree) return;
-
-    if (!_fichier) {
-        // Fichier : WAV PCM 16 bits mono, à la fréquence fournie par macOS
-        AudioStreamBasicDescription sortie = {0};
-        sortie.mSampleRate = entree->mSampleRate;
-        sortie.mFormatID = kAudioFormatLinearPCM;
-        sortie.mFormatFlags = kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked;
-        sortie.mChannelsPerFrame = 1;
-        sortie.mBitsPerChannel = 16;
-        sortie.mBytesPerFrame = 2;
-        sortie.mBytesPerPacket = 2;
-        sortie.mFramesPerPacket = 1;
-        OSStatus s = ExtAudioFileCreateWithURL((__bridge CFURLRef)self.url, kAudioFileWAVEType, &sortie, NULL,
-                                               kAudioFileFlags_EraseFile, &_fichier);
-        if (s != noErr) { fprintf(stderr, "création du fichier impossible (%d)\n", (int)s); exit(3); }
-        // Format des blocs reçus : ExtAudioFile convertit (float → 16 bits, canaux → mono)
-        ExtAudioFileSetProperty(_fichier, kExtAudioFileProperty_ClientDataFormat, sizeof(*entree), entree);
+// Libère tout ce qui a été créé auprès de Core Audio (sinon le tap reste actif)
+static void liberer(void) {
+    if (agregat != kAudioObjectUnknown && procedure) {
+        AudioDeviceStop(agregat, procedure);
+        AudioDeviceDestroyIOProcID(agregat, procedure);
+        procedure = NULL;
     }
-
-    // Récupère les données audio du bloc. Appel en deux temps (taille, puis contenu) avec
-    // EXACTEMENT les mêmes options : sinon la taille ne correspond pas et la lecture échoue.
-    const uint32_t options = kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment;
-    size_t taille = 0;
-    OSStatus s = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-        tampon, &taille, NULL, 0, kCFAllocatorDefault, kCFAllocatorDefault, options, NULL);
-    if (s != noErr || taille == 0) { _erreurs++; return; }
-    AudioBufferList *liste = malloc(taille);
-    CMBlockBufferRef bloc = NULL;
-    s = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-        tampon, NULL, liste, taille, kCFAllocatorDefault, kCFAllocatorDefault, options, &bloc);
-    if (s == noErr) {
-        UInt32 images = (UInt32)CMSampleBufferGetNumSamples(tampon);
-        // Niveau maximal (données en float pour ScreenCaptureKit)
-        if (entree->mFormatFlags & kAudioFormatFlagIsFloat) {
-            for (UInt32 b = 0; b < liste->mNumberBuffers; b++) {
-                float *x = liste->mBuffers[b].mData;
-                UInt32 n = liste->mBuffers[b].mDataByteSize / sizeof(float);
-                for (UInt32 i = 0; i < n; i++) { float v = fabsf(x[i]); if (v > _niveau) _niveau = v; }
-            }
-        }
-        if (ExtAudioFileWrite(_fichier, images, liste) == noErr) _echantillons += images;
-        else _erreurs++;
-    } else {
-        _erreurs++;
-    }
-    free(liste);
-    if (bloc) CFRelease(bloc);
+    if (agregat != kAudioObjectUnknown) { AudioHardwareDestroyAggregateDevice(agregat); agregat = kAudioObjectUnknown; }
+    if (tap != kAudioObjectUnknown) { AudioHardwareDestroyProcessTap(tap); tap = kAudioObjectUnknown; }
 }
 
-- (void)stream:(SCStream *)stream didStopWithError:(NSError *)erreur {
-    fprintf(stderr, "capture interrompue : %s\n", erreur.localizedDescription.UTF8String);
-    [self terminer];
-    exit(4);
+static dispatch_queue_t file_audio;   // file où arrivent les blocs audio
+static volatile sig_atomic_t arret_demande = 0;
+static void demander_arret(int signal_recu) { arret_demande = 1; }
+
+// Arrête la lecture (HORS de la file audio : Core Audio attend la fin du bloc en cours, l'appeler
+// depuis cette file la bloquait pour toujours), puis finalise l'en-tête WAV et résume la capture
+static void terminer(void) {
+    liberer();
+    dispatch_sync(file_audio, ^{
+        if (fichier) { ExtAudioFileDispose(fichier); fichier = NULL; }
+    });
+    fprintf(stderr, "bilan : %lld échantillons, niveau max %.4f, %d erreurs\n", echantillons, niveau, erreurs);
 }
 
-// Finalise l'en-tête WAV (sinon le fichier est illisible) et résume la capture
-- (void)terminer {
-    if (_fichier) { ExtAudioFileDispose(_fichier); _fichier = NULL; }
-    fprintf(stderr, "bilan : %lld échantillons, niveau max %.4f, %d erreurs\n", _echantillons, _niveau, _erreurs);
-}
-@end
-
-static void refuser(NSError *erreur) {
-    fprintf(stderr, "capture du son système refusée : %s\n",
-            erreur ? erreur.localizedDescription.UTF8String : "aucun écran");
+static void echouer(const char *raison, OSStatus statut) {
+    fprintf(stderr, "capture du son système impossible : %s (%d)\n", raison, (int)statut);
+    liberer();
     exit(2);
+}
+
+static NSString *uid_sortie_par_defaut(void) {
+    AudioObjectPropertyAddress adresse = {kAudioHardwarePropertyDefaultSystemOutputDevice,
+                                          kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+    AudioObjectID sortie = kAudioObjectUnknown;
+    UInt32 taille = sizeof(sortie);
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &adresse, 0, NULL, &taille, &sortie) != noErr) return nil;
+    adresse.mSelector = kAudioDevicePropertyDeviceUID;
+    CFStringRef uid = NULL;
+    taille = sizeof(uid);
+    if (AudioObjectGetPropertyData(sortie, &adresse, 0, NULL, &taille, &uid) != noErr || !uid) return nil;
+    return (__bridge_transfer NSString *)uid;
 }
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         if (argc < 2) { fprintf(stderr, "usage : capture-systeme sortie.wav\n"); return 1; }
-        Capteur *capteur = [Capteur new];
-        capteur.url = [NSURL fileURLWithPath:@(argv[1])];
+        NSURL *url = [NSURL fileURLWithPath:@(argv[1])];
 
-        // Toute l'écriture se fait sur cette file : l'arrêt y passe aussi, donc jamais
-        // pendant l'écriture d'un bloc
+        // Blocs audio sur une file ; signaux d'arrêt sur une autre (voir terminer)
         dispatch_queue_t file = dispatch_queue_create("fr.mirorecap.capture", DISPATCH_QUEUE_SERIAL);
-        const int signaux[] = {SIGINT, SIGTERM};
-        for (int i = 0; i < 2; i++) {
-            int sig = signaux[i];
-            signal(sig, SIG_IGN);
-            dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, sig, 0, file);
-            dispatch_source_set_event_handler(source, ^{
-                [capteur terminer];
-                exit(0);
-            });
-            dispatch_resume(source);
+        file_audio = file;
+        dispatch_queue_t file_arret = dispatch_queue_create("fr.mirorecap.arret", DISPATCH_QUEUE_SERIAL);
+        // Arrêt demandé (SIGTERM de l'app, ou Ctrl+C) : le signal lève un drapeau, vérifié toutes
+        // les 100 ms. (Les sources de signal de libdispatch ne se déclenchaient pas : l'outil
+        // était tué de force et son fichier jamais finalisé.)
+        signal(SIGINT, demander_arret);
+        signal(SIGTERM, demander_arret);
+        dispatch_source_t veille = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, file_arret);
+        dispatch_source_set_timer(veille, DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC, 20 * NSEC_PER_MSEC);
+        dispatch_source_set_event_handler(veille, ^{ if (arret_demande) { terminer(); exit(0); } });
+        dispatch_resume(veille);
+
+        // 1. Tap mono sur tout le son du Mac (aucune app exclue : le son de test de MiroRecap compte)
+        CATapDescription *description = [[CATapDescription alloc] initMonoGlobalTapButExcludeProcesses:@[]];
+        description.name = @"MiroRecap";
+        description.privateTap = YES;
+        description.muteBehavior = CATapUnmuted;   // l'utilisateur continue d'entendre normalement
+        OSStatus s = AudioHardwareCreateProcessTap(description, &tap);
+        if (s != noErr) echouer("création du tap refusée", s);
+
+        // 2. Périphérique agrégé privé qui lit ce tap (calé sur la sortie son actuelle)
+        NSMutableDictionary *config = [@{
+            @kAudioAggregateDeviceNameKey: @"MiroRecap capture",
+            @kAudioAggregateDeviceUIDKey: NSUUID.UUID.UUIDString,
+            @kAudioAggregateDeviceIsPrivateKey: @YES,
+            @kAudioAggregateDeviceIsStackedKey: @NO,
+            @kAudioAggregateDeviceTapAutoStartKey: @YES,
+            @kAudioAggregateDeviceTapListKey: @[@{@kAudioSubTapUIDKey: description.UUID.UUIDString,
+                                                  @kAudioSubTapDriftCompensationKey: @YES}],
+        } mutableCopy];
+        NSString *sortie = uid_sortie_par_defaut();
+        if (sortie) {
+            config[@kAudioAggregateDeviceMainSubDeviceKey] = sortie;
+            config[@kAudioAggregateDeviceSubDeviceListKey] = @[@{@kAudioSubDeviceUIDKey: sortie}];
         }
+        s = AudioHardwareCreateAggregateDevice((__bridge CFDictionaryRef)config, &agregat);
+        if (s != noErr) echouer("création du périphérique agrégé", s);
 
-        [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *contenu, NSError *erreur) {
-            if (erreur || contenu.displays.count == 0) refuser(erreur);
+        // 3. Format fourni par le tap, puis fichier WAV 16 bits mono à la même fréquence
+        AudioObjectPropertyAddress adresse = {kAudioTapPropertyFormat, kAudioObjectPropertyScopeGlobal,
+                                              kAudioObjectPropertyElementMain};
+        UInt32 taille = sizeof(format);
+        s = AudioObjectGetPropertyData(tap, &adresse, 0, NULL, &taille, &format);
+        if (s != noErr || format.mSampleRate <= 0) echouer("format du tap illisible", s);
 
-            // Un filtre « écran entier » est obligatoire, mais on ne garde que l'audio
-            SCContentFilter *filtre = [[SCContentFilter alloc] initWithDisplay:contenu.displays.firstObject
-                                                              excludingWindows:@[]];
-            SCStreamConfiguration *config = [SCStreamConfiguration new];
-            config.capturesAudio = YES;
-            config.excludesCurrentProcessAudio = NO;   // le test joue un son depuis l'app : il doit être capté
-            config.sampleRate = 48000;
-            config.channelCount = 1;
-            // Image minuscule et 1 image/s : coût négligeable (elle n'est pas lue)
-            config.width = 2;
-            config.height = 2;
-            config.minimumFrameInterval = CMTimeMake(1, 1);
+        AudioStreamBasicDescription wav = {0};
+        wav.mSampleRate = format.mSampleRate;
+        wav.mFormatID = kAudioFormatLinearPCM;
+        wav.mFormatFlags = kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked;
+        wav.mChannelsPerFrame = 1;
+        wav.mBitsPerChannel = 16;
+        wav.mBytesPerFrame = 2;
+        wav.mBytesPerPacket = 2;
+        wav.mFramesPerPacket = 1;
+        s = ExtAudioFileCreateWithURL((__bridge CFURLRef)url, kAudioFileWAVEType, &wav, NULL,
+                                      kAudioFileFlags_EraseFile, &fichier);
+        if (s != noErr) echouer("création du fichier", s);
+        ExtAudioFileSetProperty(fichier, kExtAudioFileProperty_ClientDataFormat, sizeof(format), &format);
 
-            capteur.flux = [[SCStream alloc] initWithFilter:filtre configuration:config delegate:capteur];
-            NSError *e = nil;
-            [capteur.flux addStreamOutput:capteur type:SCStreamOutputTypeAudio sampleHandlerQueue:file error:&e];
-            if (e) refuser(e);
-            [capteur.flux startCaptureWithCompletionHandler:^(NSError *e2) {
-                if (e2) refuser(e2);
-                printf("capture démarrée\n");
-                fflush(stdout);
-            }];
-        }];
+        // 4. Lecture : chaque bloc est écrit (ExtAudioFile convertit float → 16 bits)
+        BOOL flottant = (format.mFormatFlags & kAudioFormatFlagIsFloat) != 0;
+        UInt32 octets_par_image = format.mBytesPerFrame ? format.mBytesPerFrame : sizeof(float);
+        s = AudioDeviceCreateIOProcIDWithBlock(&procedure, agregat, file,
+            ^(const AudioTimeStamp *maintenant, const AudioBufferList *entree, const AudioTimeStamp *heure_entree,
+              AudioBufferList *sortie_audio, const AudioTimeStamp *heure_sortie) {
+                if (!fichier || !entree || entree->mNumberBuffers == 0) return;
+                blocs++;
+                UInt32 images = entree->mBuffers[0].mDataByteSize / octets_par_image;
+                if (flottant) {
+                    for (UInt32 b = 0; b < entree->mNumberBuffers; b++) {
+                        const float *x = entree->mBuffers[b].mData;
+                        UInt32 n = entree->mBuffers[b].mDataByteSize / sizeof(float);
+                        for (UInt32 i = 0; i < n; i++) { float v = fabsf(x[i]); if (v > niveau) niveau = v; }
+                    }
+                }
+                if (ExtAudioFileWrite(fichier, images, entree) == noErr) echantillons += images;
+                else erreurs++;
+            });
+        if (s != noErr) echouer("création de la lecture", s);
+        s = AudioDeviceStart(agregat, procedure);
+        if (s != noErr) echouer("démarrage de la lecture refusé", s);
+        printf("capture démarrée (%.0f Hz)\n", format.mSampleRate);
+        fflush(stdout);
+
+        // 5. Garde-fou : si macOS n'envoie aucun bloc en 3 s, on s'arrête au lieu d'attendre pour rien
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), file_arret, ^{
+            if (blocs == 0) echouer("aucun bloc audio envoyé par macOS", 0);
+        });
         dispatch_main();
     }
 }

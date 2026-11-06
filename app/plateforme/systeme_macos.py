@@ -17,6 +17,18 @@ def dossier_sortie_defaut():
     return ICLOUD / "Comptes-rendus" if ICLOUD.exists() else Path.home() / "Comptes-rendus"
 
 
+# Écrans des Réglages Système à ouvrir quand une autorisation manque
+REGLAGES = {
+    "micro": "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+    "audio": "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture",
+}
+
+
+def ouvrir_reglages(quoi):
+    if quoi in REGLAGES:
+        ouvrir(REGLAGES[quoi])
+
+
 def notifier(titre, message):
     """Notification au nom de MiroRecap (nom et logo de l'app, un clic ouvre la fenêtre).
     Dans l'app installée, c'est le lanceur natif qui l'affiche ; jamais de script ni de Python."""
