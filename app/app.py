@@ -3704,6 +3704,17 @@ class App:
         self.file_traitement.put({"projet": projet, "fichier": fichier, "mode": mode})
         return {"ok": True, "en_attente": self.file_traitement.qsize()}
 
+    def liberer_whisper(self):
+        """Vide la mémoire prise par Whisper quand plus rien ne l'attend (ni appel en cours, ni fichier
+        en file) : sinon le modèle reste chargé (plusieurs Go) tant que l'app est ouverte."""
+        if self.enreg.actif or not self.file_traitement.empty():
+            return
+        try:
+            with VERROU_WHISPER:
+                plateforme.whisper.liberer()
+        except Exception as e:
+            print(f"Libération de Whisper : {e}", flush=True)
+
     def travailleur(self):
         while True:
             tache = self.file_traitement.get()
@@ -3754,6 +3765,7 @@ class App:
                         TRAITEMENT.update(progression=0.0)
                 if not direct or transcription is None:
                     transcription = transcrire_deux_pistes(*pistes) if pistes else transcrire(chemin)
+                self.liberer_whisper()
                 if not transcription:
                     raise ValueError("aucune parole détectée")
                 self.statut = "Analyse…"
@@ -3793,6 +3805,7 @@ class App:
                 self.en_file.discard(chemin)
                 self.tailles.pop(chemin, None)
                 self.statut = ""
+                self.liberer_whisper()   # aussi après une erreur en pleine transcription
 
 
 if __name__ == "__main__":

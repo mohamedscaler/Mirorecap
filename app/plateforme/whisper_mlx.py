@@ -38,3 +38,18 @@ def transcrire(audio, modele, langue, consigne, suivi, mots=False):
         word_timestamps=mots,
     )
     return resultat.get("segments", [])
+
+
+def liberer():
+    """Retire le modèle de la mémoire. mlx_whisper le garde sinon jusqu'à la fermeture de l'app
+    (1,5 à 3 Go, plus la réserve de mémoire graphique de MLX). Le prochain appel le recharge."""
+    module = sys.modules.get("mlx_whisper.transcribe")
+    gardien = getattr(module, "ModelHolder", None)
+    if gardien is None or gardien.model is None:
+        return
+    gardien.model = None
+    gardien.model_path = None
+    import gc
+    import mlx.core as mx
+    gc.collect()
+    mx.clear_cache()

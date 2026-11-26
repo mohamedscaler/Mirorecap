@@ -100,3 +100,13 @@ def transcrire(audio, modele, langue, consigne, suivi, mots=False):
         print(f"Carte graphique inutilisable pour Whisper ({e}) : processeur", flush=True)
         _GPU_EN_PANNE = True
         return _transcrire_avec(_charger(modele, False), audio, langue, consigne, suivi, mots)
+
+
+def liberer():
+    """Retire le modèle de la mémoire. Le prochain appel le recharge."""
+    with _VERROU:
+        if not _MODELES_CHARGES:
+            return
+        _MODELES_CHARGES.clear()
+    import gc
+    gc.collect()
