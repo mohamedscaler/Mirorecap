@@ -69,11 +69,24 @@ def _convertir_sans_av(source, cible):
 
 # --- Capture du son du PC (WASAPI loopback) ------------------------------------------
 
-def _peripherique_loopback(pa):
-    """Entrée « loopback » de la sortie audio par défaut (ce qu'on entend dans le casque)."""
+def _sorties_wasapi(pa):
+    """Sorties audio réelles (haut-parleurs, casques…) et nom de celle par défaut."""
     import pyaudiowpatch as pyaudio
     wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
-    sortie = pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
+    sorties = []
+    for i in range(wasapi["deviceCount"]):
+        d = pa.get_device_info_by_host_api_device_index(wasapi["index"], i)
+        if d["maxOutputChannels"] > 0 and not d.get("isLoopbackDevice"):
+            sorties.append(d)
+    return sorties, pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
+
+
+def _peripherique_loopback(pa, nom=""):
+    """Entrée « loopback » de la sortie choisie (ce qu'on entend dans le casque), ou de la sortie
+    par défaut si aucune n'est choisie ou si elle est débranchée."""
+    sorties, sortie = _sorties_wasapi(pa)
+    if nom:
+        sortie = next((d for d in sorties if d["name"] == nom), sortie)
     if sortie.get("isLoopbackDevice"):
         return sortie
     for boucle in pa.get_loopback_device_info_generator():
@@ -90,14 +103,31 @@ def capture_disponible():
         return False
 
 
+# WASAPI capte une sortie précise (loopback) : on peut choisir laquelle
+CHOIX_SORTIE = True
+
+
+def liste_sorties():
+    """Noms des sorties audio du PC et nom de celle par défaut. PortAudio relit la liste à chaque
+    ouverture : un casque branché depuis apparaît (sauf pendant une capture en cours)."""
+    import pyaudiowpatch as pyaudio
+    pa = pyaudio.PyAudio()
+    try:
+        sorties, defaut = _sorties_wasapi(pa)
+        return [d["name"] for d in sorties], defaut["name"]
+    finally:
+        pa.terminate()
+
+
 class CaptureSysteme:
     """Enregistre le son du PC dans un WAV 16 bits mono, à la fréquence de la carte son.
     WASAPI n'envoie rien quand aucun son ne joue : on comble avec du silence, pour que la
     piste reste calée sur celle du micro (elles sont mélangées à l'arrêt)."""
     TROU_MAX = 0.2   # au-delà de 0,2 s sans données, on écrit du silence
 
-    def __init__(self, fichier):
+    def __init__(self, fichier, sortie=""):
         self.fichier = str(fichier)
+        self.sortie = sortie   # nom de la sortie à capter ("" = celle par défaut)
         self.returncode = None
         self.pid = None
         self.stderr = io.StringIO()
@@ -137,7 +167,7 @@ class CaptureSysteme:
         pa = flux = None
         try:
             pa = pyaudio.PyAudio()
-            source = _peripherique_loopback(pa)
+            source = _peripherique_loopback(pa, self.sortie)
             frequence = int(source["defaultSampleRate"])
             canaux = max(1, int(source["maxInputChannels"]))
 
@@ -192,10 +222,11 @@ class CaptureSysteme:
         self.returncode = code
 
 
-def lancer_capture(fichier):
+def lancer_capture(fichier, sortie=""):
     """Démarre la capture du son du PC dans un WAV. Elle s'arrête par terminate() (le fichier est
-    finalisé) ; un code de sortie non nul en moins de 4 s = capture impossible (message dans stderr)."""
-    return CaptureSysteme(fichier)
+    finalisé) ; un code de sortie non nul en moins de 4 s = capture impossible (message dans stderr).
+    `sortie` : nom de la sortie à capter ("" ou débranchée = celle par défaut)."""
+    return CaptureSysteme(fichier, sortie)
 
 
 def jouer_son_test():

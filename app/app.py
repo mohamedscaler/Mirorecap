@@ -98,6 +98,7 @@ CONFIG_DEFAUT = {
     "langue": "fr",
     # Enregistre aussi le son qui sort du Mac (voix des interlocuteurs en visio)
     "son_systeme": True,
+    "sortie": "",                 # Windows : sortie audio dont on capte le son ("" = celle par défaut)
     # Transcrit pendant l'appel (texte en direct, compte rendu plus rapide) ; à désactiver sur un Mac lent
     "transcription_direct": True,
     # Installe les mises à jour toute seule dès qu'elles sortent (quand l'app ne fait rien)
@@ -325,7 +326,11 @@ class Enregistreur:
     """Enregistre le micro par défaut dans un .wav, et en parallèle le son du Mac
     (outil natif capture-systeme) dans une seconde piste, mélangée à l'arrêt.
     Le callback audio pousse les blocs dans une file, un thread séparé les écrit
-    sur le disque : le callback ne bloque jamais (sinon trous dans l'audio)."""
+    sur le disque : le callback ne bloque jamais (sinon trous dans l'audio).
+
+    Pendant l'appel, on peut changer de micro (le nouveau prend le relais dans le même fichier)
+    et couper ou relancer le son de l'ordinateur : chaque capture devient un « segment » placé
+    à son moment dans la piste finale, complétée par du silence."""
 
     def __init__(self):
         self.actif = False
@@ -336,19 +341,31 @@ class Enregistreur:
         self._ecrivain = None
         self.niveau_micro = 0.0
         self.dernier_pic_sature = 0.0
-        self.systeme = None
+        self.systeme = None              # piste en cours du son de l'ordinateur (segment actif)
         self._capture = None
+        self._segments = []              # [(décalage en s, fichier, capture)] de l'enregistrement en cours
+        self._verrou = threading.Lock()  # changements de micro / de capture pendant l'appel
+        self.frequence = None
+        self._trames = 0                 # échantillons reçus du micro : position exacte dans l'enregistrement
+        self._generation = 0             # flux micro qui écrit (les autres sont ignorés pendant un changement)
+        self._generation_attendue = 0    # dernier flux micro ouvert : il prend le relais à son premier bloc
+        self.micro_nom = ""              # micro réellement utilisé
         self.direct = None               # TranscripteurDirect de l'enregistrement en cours (ou du dernier)
 
     def niveaux(self):
         """Niveaux en direct (0 à 1) du micro et de la capture du son du Mac, pour les jauges."""
         systeme = {"etat": SON_SYSTEME.get("etat", ""), "niveau": 0.0, "vivant": False}
-        if self._capture is not None and self.systeme is not None:
-            systeme["vivant"] = self._capture.poll() is None
+        capture, fichier = self._capture, self.systeme
+        if capture is not None and fichier is not None:
+            systeme["vivant"] = capture.poll() is None
             if systeme["vivant"]:
-                systeme["niveau"] = plateforme.audio.niveau_capture(self.systeme)
+                systeme["niveau"] = plateforme.audio.niveau_capture(fichier)
         return {"enregistrement": self.actif, "micro": round(self.niveau_micro, 3),
                 "sature": time_monotonic() - self.dernier_pic_sature < 1.5, "systeme": systeme}
+
+    def position(self):
+        """Secondes enregistrées au micro depuis le début (sert à caler les segments du son système)."""
+        return self._trames / self.frequence if self.frequence else 0.0
 
     def demarrer(self):
         self.niveau_micro = 0.0
@@ -383,40 +400,130 @@ class Enregistreur:
             print(f"Transcription en direct indisponible : {e}", flush=True)
         self.direct = direct
 
-        def callback(indata, frames, time, status):
-            file_attente.put(indata.copy())
-            if direct:
-                direct.ajouter_micro(indata.copy())
-            pic = float(np.abs(indata).max()) / 32768.0
-            niveau = niveau_affiche(indata.astype("float32") / 32768.0)
-            self.niveau_micro = max(niveau, self.niveau_micro * 0.85)   # retombe doucement, pour une jauge lisible
-            if pic >= 0.98:
-                self.dernier_pic_sature = time_monotonic()
+        def rappel_pour(generation):
+            """Callback d'un flux micro. Pendant un changement de micro, l'ancien flux écrit jusqu'au
+            premier bloc du nouveau, puis se tait : pas de trou ni de doublon dans le fichier."""
+            def callback(indata, frames, time, status):
+                if generation != self._generation:
+                    if generation != self._generation_attendue:
+                        return   # ancien micro, remplacé
+                    self._generation = generation   # premier bloc du nouveau micro : il prend le relais
+                file_attente.put(indata.copy())
+                self._trames += len(indata)
+                if direct:
+                    direct.ajouter_micro(indata.copy())
+                pic = float(np.abs(indata).max()) / 32768.0
+                niveau = niveau_affiche(indata.astype("float32") / 32768.0)
+                self.niveau_micro = max(niveau, self.niveau_micro * 0.85)   # retombe doucement, pour une jauge lisible
+                if pic >= 0.98:
+                    self.dernier_pic_sature = time_monotonic()
+            return callback
 
+        self._rappel_pour = rappel_pour
         self._arret = arret
+        self.frequence, self._trames = frequence, 0
+        self._generation = self._generation_attendue = 1
+        self._segments = []
         self.actif = True
         self.debut = dt.datetime.now()
         self._ecrivain = threading.Thread(target=ecrire, daemon=True)
         self._ecrivain.start()
         try:
-            self._flux = sd.InputStream(device=peripherique, samplerate=frequence, channels=1, dtype="int16", callback=callback)
+            self._flux = sd.InputStream(device=peripherique, samplerate=frequence, channels=1, dtype="int16", callback=rappel_pour(1))
             self._flux.start()
         except Exception as e:
             if peripherique is None:
                 if direct:
                     direct.arret.set()   # micro inaccessible : les threads du direct s'arrêtent
+                self.actif = False
+                arret.set()
                 raise
             print(f"Micro choisi inutilisable ({e}) : micro par défaut", flush=True)
+            peripherique = None
             frequence_defaut = int(sd.query_devices(kind="input")["default_samplerate"])
             if frequence_defaut != frequence:
                 if direct:
                     direct.arret.set()
-                raise RuntimeError("le micro choisi est inaccessible : choisis-en un autre dans Réglages → Enregistrement")
-            self._flux = sd.InputStream(samplerate=frequence, channels=1, dtype="int16", callback=callback)
+                self.actif = False
+                arret.set()
+                raise RuntimeError("le micro choisi est inaccessible : choisis-en un autre dans la barre de l'appel ou dans Réglages → Enregistrement")
+            self._flux = sd.InputStream(samplerate=frequence, channels=1, dtype="int16", callback=rappel_pour(1))
             self._flux.start()
+        self.micro_nom = nom_micro(peripherique)
         self._demarrer_son_systeme()
 
-    def _demarrer_son_systeme(self):
+    def changer_micro(self, nom):
+        """Passe sur un autre micro sans couper l'enregistrement : le nouveau flux s'ouvre à la même
+        fréquence que le fichier en cours, puis remplace l'ancien. Retourne "" si c'est fait, sinon
+        la raison (le choix reste enregistré pour le prochain appel)."""
+        with self._verrou:
+            if not self.actif:
+                return "pas d'enregistrement en cours"
+            index = None
+            if nom:
+                index = next((m["index"] for m in liste_micros()[0] if m["id"] == nom), None)
+                if index is None:
+                    return "micro débranché"
+            if nom_micro(index) == self.micro_nom:
+                return ""   # déjà celui-là
+            generation, flux = self._generation_attendue + 1, None
+            try:
+                flux = sd.InputStream(device=index, samplerate=self.frequence, channels=1, dtype="int16",
+                                      callback=self._rappel_pour(generation))
+                self._generation_attendue = generation
+                flux.start()
+            except Exception as e:
+                print(f"Changement de micro impossible pendant l'appel : {e}", flush=True)
+                self._generation_attendue = self._generation
+                if flux is not None:
+                    try:
+                        flux.close()
+                    except Exception:
+                        pass
+                return str(e)
+            ancien, self._flux = self._flux, flux
+            self.micro_nom = nom_micro(index)
+            # L'ancien micro continue jusqu'au premier bloc du nouveau (au plus ~1 s pour un casque Bluetooth)
+            limite = time.time() + 1.5
+            while self._generation != generation and time.time() < limite:
+                time.sleep(0.02)
+            self._generation = generation
+            for etape in (ancien.stop, ancien.close):
+                try:
+                    etape()
+                except Exception as e:
+                    print(f"Arrêt de l'ancien micro : {e}", flush=True)
+            print(f"Micro changé pendant l'appel : {self.micro_nom}", flush=True)
+            return ""
+
+    def regler_son_systeme(self, actif):
+        """Coupe ou relance la capture du son de l'ordinateur pendant l'appel. La partie coupée
+        sera du silence dans la piste finale."""
+        with self._verrou:
+            if not self.actif:
+                return
+            tourne = self._capture is not None and self._capture.poll() is None
+            if actif and not tourne:
+                self._demarrer_son_systeme(self.position())
+            elif not actif:
+                self._couper_son_systeme()
+                SON_SYSTEME.update(etat="off", message="")
+
+    def changer_sortie(self):
+        """Nouvelle sortie à capter (Windows) : la capture repart sur celle-ci, sans couper l'appel."""
+        with self._verrou:
+            if not self.actif or not plateforme.audio.CHOIX_SORTIE:
+                return
+            if self._capture is not None and self._capture.poll() is None:
+                self._couper_son_systeme()
+                self._demarrer_son_systeme(self.position())
+
+    def _couper_son_systeme(self):
+        capture, self._capture, self.systeme = self._capture, None, None
+        if capture is not None and capture.poll() is None:
+            capture.terminate()   # SIGTERM : l'outil finalise son fichier (attendu à l'arrêt)
+
+    def _demarrer_son_systeme(self, decalage=0.0):
         self.systeme, self._capture = None, None
         if not CONFIG.get("son_systeme", True):
             SON_SYSTEME.update(etat="off", message="")
@@ -425,21 +532,25 @@ class Enregistreur:
             SON_SYSTEME.update(etat="indisponible", message="Outil de capture absent (lancement hors de l'app ?)")
             return
         DOSSIER_CAPTURE.mkdir(parents=True, exist_ok=True)
-        self.systeme = DOSSIER_CAPTURE / (self.chemin.stem + ".wav")
-        self._capture = plateforme.audio.lancer_capture(self.systeme)
-        capture = self._capture
+        fichier = DOSSIER_CAPTURE / f"{self.chemin.stem}-{len(self._segments) + 1}.wav"
+        capture = plateforme.audio.lancer_capture(fichier, CONFIG.get("sortie", ""))
+        self.systeme, self._capture = fichier, capture
+        self._segments.append((decalage, fichier, capture))
+        if SON_SYSTEME["etat"] in ("off", "indisponible"):
+            SON_SYSTEME.update(etat="", message="")   # relancé pendant l'appel : en attente du verdict
         if self.direct:
-            self.direct.brancher_systeme(self.systeme)
+            self.direct.brancher_systeme(fichier, decalage)
 
         def surveiller():
             # Un refus arrive en moins d'une seconde ; au-delà, la capture tourne
             try:
                 code = capture.wait(timeout=4)
             except subprocess.TimeoutExpired:
-                SON_SYSTEME.update(etat="ok", message="")
+                if self._capture is capture:
+                    SON_SYSTEME.update(etat="ok", message="")
                 return
             if code == 0:
-                return   # arrêt normal demandé par nous (enregistrement très court), pas un refus
+                return   # arrêt normal demandé par nous (enregistrement très court ou coupé), pas un refus
             erreur = (capture.stderr.read() or "").strip()
             print(f"capture-systeme ({code}) : {erreur}", flush=True)
             deja_refusee = SON_SYSTEME["etat"] == "refusee"
@@ -452,32 +563,83 @@ class Enregistreur:
     def arreter(self):
         # Chaque étape est protégée : une erreur (casque débranché, micro changé en cours de route)
         # ne doit jamais laisser l'enregistrement bloqué « en cours » sans moyen de l'arrêter
-        try:
-            for etape in (self._flux.stop, self._flux.close):
-                try:
-                    etape()
-                except Exception as e:
-                    print(f"Arrêt du micro : {e}", flush=True)
-        finally:
-            self.actif = False
-            self._arret.set()
-        capture, ecrivain, systeme, direct = self._capture, self._ecrivain, self.systeme, self.direct
+        with self._verrou:
+            try:
+                for etape in (self._flux.stop, self._flux.close):
+                    try:
+                        etape()
+                    except Exception as e:
+                        print(f"Arrêt du micro : {e}", flush=True)
+            finally:
+                self.actif = False
+                self._arret.set()
+            segments, ecrivain, direct, chemin = list(self._segments), self._ecrivain, self.direct, self.chemin
 
         def finaliser():
             """Partie lente de l'arrêt (fermeture de la capture du son, fin d'écriture),
             faite dans le thread de traitement pour que le bouton réponde tout de suite.
             Retourne la piste « son du Mac », ou None."""
-            if capture and capture.poll() is None:
-                capture.terminate()   # SIGTERM : l'outil finalise son fichier WAV
+            for _, _, capture in segments:
+                if capture.poll() is None:
+                    capture.terminate()   # SIGTERM : l'outil finalise son fichier WAV
                 try:
                     capture.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     capture.kill()
             ecrivain.join(timeout=30)  # attend que tout soit bien écrit
-            return systeme if systeme and systeme.exists() else None
+            presents = [(d, f) for d, f, _ in segments if f.exists()]
+            if not presents:
+                return None
+            if len(presents) == 1 and presents[0][0] < 0.05:
+                return presents[0][1]   # cas habituel : une seule capture, depuis le début
+            piste = DOSSIER_CAPTURE / (chemin.stem + ".wav")
+            try:
+                assembler_segments(presents, piste)
+            except Exception as e:
+                print(f"Assemblage du son de l'ordinateur impossible, micro seul : {e}", flush=True)
+                return None
+            finally:
+                for _, f in presents:
+                    f.unlink(missing_ok=True)
+            return piste
 
         finaliser.direct = direct   # transcription en direct à terminer après la finalisation
         return self.chemin, self.debut, finaliser
+
+
+def nom_micro(index):
+    """Nom du micro d'index `index` (None = celui du système)."""
+    try:
+        return sd.query_devices(index, kind="input")["name"] if index is not None else sd.query_devices(kind="input")["name"]
+    except Exception:
+        return ""
+
+
+def assembler_segments(segments, cible):
+    """Pistes du son de l'ordinateur coupées pendant l'appel → une seule piste 16 kHz, chaque
+    segment placé à son moment (décalage en s), du silence entre eux."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp, \
+            sf.SoundFile(cible, "w", samplerate=16000, channels=1, subtype="PCM_16") as sortie:
+        ecrits = 0
+        for decalage, source in sorted(segments, key=lambda s: s[0]):
+            converti = Path(tmp) / "segment.wav"
+            ok, erreur = plateforme.audio.convertir_wav_16k(source, converti)
+            if not ok and reparer_wav(source):
+                ok, erreur = plateforme.audio.convertir_wav_16k(source, converti)
+            if not ok:
+                print(f"Segment du son de l'ordinateur illisible ({source.name}) : {erreur}", flush=True)
+                continue
+            debut = int(round(decalage * 16000))
+            if debut > ecrits:
+                sortie.write(np.zeros(debut - ecrits, dtype="float32"))
+                ecrits = debut
+            with sf.SoundFile(converti) as segment:
+                if ecrits > debut:   # chevauchement (relance très rapide) : on ne double pas
+                    segment.seek(min(ecrits - debut, segment.frames))
+                for bloc in segment.blocks(16000 * 30, dtype="float32"):
+                    sortie.write(bloc)
+                    ecrits += len(bloc)
 
 
 class Moniteur:
@@ -572,7 +734,7 @@ def tester_son_systeme():
         return {"ok": False, "message": "Outil de capture absent."}
     with tempfile.TemporaryDirectory() as tmp:
         fichier = Path(tmp) / "test.wav"
-        proc = plateforme.audio.lancer_capture(fichier)
+        proc = plateforme.audio.lancer_capture(fichier, CONFIG.get("sortie", ""))
         try:
             code = proc.wait(timeout=2)
             erreur = (proc.stderr.read() or "").strip()
@@ -1189,6 +1351,7 @@ class LecteurWavEnCours:
 
     def __init__(self, chemin):
         self.chemin, self.lu, self.donnees, self.frequence = chemin, 0, None, None
+        self.decalage = None   # voir TranscripteurDirect.brancher_systeme
 
     def lire(self):
         try:
@@ -1246,8 +1409,24 @@ class TranscripteurDirect:
     def ajouter_micro(self, bloc):
         self.blocs_micro.put(bloc)   # appelé par le callback audio : ne bloque jamais
 
-    def brancher_systeme(self, chemin):
-        self.lecteur_systeme = LecteurWavEnCours(chemin)
+    def brancher_systeme(self, chemin, decalage=0.0):
+        """Nouvelle piste du son de l'ordinateur, commencée `decalage` s après le début de l'appel
+        (capture relancée pendant l'appel) : le trou est comblé par du silence."""
+        lecteur = LecteurWavEnCours(chemin)
+        lecteur.decalage = decalage
+        self.lecteur_systeme = lecteur
+
+    def _lire_systeme(self):
+        lecteur = self.lecteur_systeme
+        if lecteur is None:
+            return None
+        son = lecteur.lire()
+        if son is not None and len(son) and lecteur.decalage is not None:
+            manque = int(lecteur.decalage * FREQ) - int(round(self.decoupeurs[INTERLOCUTEUR].duree * FREQ))
+            lecteur.decalage = None
+            if manque > 0:
+                son = np.concatenate([np.zeros(manque, dtype="float32"), son])
+        return son
 
     def _lire_micro(self):
         blocs = []
@@ -1288,7 +1467,7 @@ class TranscripteurDirect:
                         return
                     continue
                 for qui, son in ((MOI, self._lire_micro()),
-                                 (INTERLOCUTEUR, self.lecteur_systeme.lire() if self.lecteur_systeme else None)):
+                                 (INTERLOCUTEUR, self._lire_systeme())):
                     if son is not None and len(son):
                         self._deposer(qui, self.decoupeurs[qui].ajouter(son))
                 if not fin:
@@ -2860,6 +3039,57 @@ def micros_actuels(rafraichir=False):
     return {"micro": CONFIG.get("micro", ""), "micros": [{"id": m["id"], "nom": m["nom"]} for m in micros], "micro_defaut": defaut}
 
 
+def peripheriques(rafraichir=False):
+    """Micros, sorties et son de l'ordinateur, pour la barre de l'appel en cours."""
+    enreg = Api.app.enreg if Api.app else None
+    en_cours = bool(enreg and enreg.actif)
+    sorties, sortie_defaut = [], ""
+    if plateforme.audio.CHOIX_SORTIE:
+        try:
+            sorties, sortie_defaut = plateforme.audio.liste_sorties()
+        except Exception as e:
+            print(f"Liste des sorties audio : {e}", flush=True)
+    return {
+        **micros_actuels(rafraichir),
+        "micro_utilise": enreg.micro_nom if en_cours else "",
+        "son_systeme": CONFIG.get("son_systeme", True),
+        "choix_sortie": plateforme.audio.CHOIX_SORTIE,
+        "sortie": CONFIG.get("sortie", ""),
+        "sorties": sorties,
+        "sortie_defaut": sortie_defaut,
+        "enregistrement": en_cours,
+    }
+
+
+def regler_peripheriques(donnees):
+    """Micro, sortie et son de l'ordinateur : gardés pour les prochains appels et, pendant un
+    enregistrement, appliqués tout de suite. Retourne ce qu'il faut dire à l'utilisateur ("" si rien)."""
+    enreg = Api.app.enreg if Api.app else None
+    en_cours = bool(enreg and enreg.actif)
+    messages = []
+    micro = donnees.get("micro")
+    if isinstance(micro, str) and (micro == "" or micro in {m["id"] for m in liste_micros()[0]}):
+        CONFIG["micro"] = micro
+        if en_cours:
+            erreur = enreg.changer_micro(micro)
+            nom = micro or "le micro du système"
+            messages.append(f"Micro changé : {nom}." if not erreur else
+                            f"Impossible de passer sur {nom} pendant l'appel : il sera utilisé au prochain.")
+    if isinstance(donnees.get("son_systeme"), bool):
+        CONFIG["son_systeme"] = donnees["son_systeme"]
+        if en_cours:
+            enreg.regler_son_systeme(donnees["son_systeme"])
+            messages.append(f"Son du {ORDI} enregistré à partir de maintenant." if donnees["son_systeme"] else
+                            f"Son du {ORDI} coupé : seul ton micro est enregistré à partir de maintenant.")
+    if plateforme.audio.CHOIX_SORTIE and isinstance(donnees.get("sortie"), str):
+        CONFIG["sortie"] = donnees["sortie"][:300]
+        if en_cours and CONFIG.get("son_systeme", True):
+            enreg.changer_sortie()
+            messages.append(f"Son capté sur : {CONFIG['sortie'] or 'la sortie par défaut'}.")
+    sauver_config(CONFIG)
+    return " ".join(messages)
+
+
 def lire_reglages():
     micros = micros_actuels()
     cle = CONFIG.get("cle_api_anthropic", "")
@@ -2929,11 +3159,8 @@ def sauver_reglages(donnees):
         CONFIG["maj_auto"] = donnees["maj_auto"]
     if isinstance(donnees.get("quitter_a_la_fermeture"), bool):
         CONFIG["quitter_a_la_fermeture"] = donnees["quitter_a_la_fermeture"]
-    if isinstance(donnees.get("micro"), str):
-        if donnees["micro"] == "" or donnees["micro"] in {m["id"] for m in liste_micros()[0]}:
-            CONFIG["micro"] = donnees["micro"]
-    if isinstance(donnees.get("son_systeme"), bool):
-        CONFIG["son_systeme"] = donnees["son_systeme"]
+    if any(k in donnees for k in ("micro", "son_systeme", "sortie")):
+        regler_peripheriques(donnees)   # appliqués tout de suite, même pendant un appel
     if isinstance(donnees.get("transcription_direct"), bool):
         CONFIG["transcription_direct"] = donnees["transcription_direct"]
     if donnees.get("langue") in LANGUES:
@@ -3000,6 +3227,7 @@ class Api(http.server.BaseHTTPRequestHandler):
                 "/api/projet": lambda: lire_projet(q.get("nom", "")),
                 "/api/reglages": lire_reglages,
                 "/api/micros": lambda: micros_actuels(rafraichir=True),
+                "/api/peripheriques": lambda: peripheriques(rafraichir=True),
                 "/api/niveaux": niveaux_en_direct,
                 "/api/direct": lambda: (self.app.enreg.direct.etat() if self.app.enreg.direct
                                         else {"mode": "", "texte": "", "retard": 0}),
@@ -3050,6 +3278,9 @@ class Api(http.server.BaseHTTPRequestHandler):
             if self.path == "/api/test-micro":
                 MONITEUR.arreter()
                 return self._json(200, tester_micro())
+            if self.path == "/api/peripheriques":
+                message = regler_peripheriques(d)
+                return self._json(200, dict(peripheriques(), ok=True, message=message))
             if self.path == "/api/test-son":
                 return self._json(200, tester_son_systeme())
             if self.path == "/api/fiche":

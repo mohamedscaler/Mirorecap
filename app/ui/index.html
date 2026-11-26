@@ -821,12 +821,32 @@
   .dock-stop span { width: 13px; height: 13px; border-radius: 3px; background: var(--rouge); }
   .dock-stop:disabled { opacity: .5; }
   .dock-espace { flex: 1; }
-  .dock-micro { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; font-size: 12.5px; color: var(--second);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 6px; }
-  .dock-micro svg { flex-shrink: 0; width: 13px; height: 13px; }
+  .dock-choix { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 32px; padding: 0 7px 0 9px; border-radius: 9px;
+    font-size: 12.5px; color: var(--second); white-space: nowrap; }
+  .dock-choix:hover, .dock-choix[aria-expanded="true"] { background: var(--remplissage-fort); color: var(--texte); }
+  .dock-choix svg { flex-shrink: 0; width: 13px; height: 13px; }
+  .dock-choix .chevrons { width: 10px; height: 10px; opacity: .7; }
+  .dock-choix .nom { overflow: hidden; text-overflow: ellipsis; }
+  #dock-micro { max-width: 210px; }
+  #dock-son.coupe { color: var(--second); }
+  #dock-son.coupe .nom { text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 60%, transparent); }
+  #dock-son.alerte svg:first-child { color: var(--orange, #FF9F0A); }
+  /* Menus de la barre : comme les menus de macOS (coche à gauche, titres de section grisés) */
+  /* Pendant l'appel, la barre occupe le bas : les messages s'affichent en haut de la page */
+  body:has(#seance:not([hidden])) .message { bottom: auto; top: calc(var(--haut, 40px) + 6px); z-index: 40; }
+  .menu-dock { right: auto; top: auto; min-width: 250px; max-width: 340px; z-index: 30; font-size: 13px; }
+  .menu-dock .titre-menu { padding: 5px 10px 3px 26px; font-size: 11.5px; font-weight: 600; color: var(--second); }
+  .menu-dock button { position: relative; padding: 5px 10px 5px 26px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--texte); }
+  .menu-dock button[aria-checked="true"]::before { content: ""; position: absolute; left: 9px; top: 50%; width: 11px; height: 11px; margin-top: -5.5px;
+    background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='m3 8.5 3.2 3L13 4.5'/%3E%3C/svg%3E") center / contain no-repeat; }
+  .menu-dock button:focus-visible { outline: 0; background: var(--bleu); color: #fff; }
+  .menu-dock button .detail { color: var(--second); }
+  .menu-dock button:hover .detail, .menu-dock button:focus-visible .detail { color: rgba(255, 255, 255, .8); }
+  .menu-dock .note-menu { padding: 4px 10px 5px 26px; font-size: 11.5px; line-height: 1.4; color: var(--second); white-space: normal; }
+  .menu-dock .note-menu.alerte { color: var(--rouge); }
   .dock-langue { width: auto; flex: 0 0 auto; box-shadow: none; border: 0; background: none; color: var(--second); font-family: inherit; font-size: 12.5px; padding: 6px 4px; border-radius: 8px; }
   .dock-langue:hover { background: var(--remplissage-fort); color: var(--texte); }
-  @media (max-width: 720px) { .dock-micro { display: none; } .seance-page { padding: 28px 20px 150px; } }
+  @media (max-width: 720px) { .dock-choix .nom, .dock-choix .chevrons { display: none; } .seance-page { padding: 28px 20px 150px; } }
 
   .bouton-panneau {
     position: fixed; top: 2px; z-index: 50; width: 26px; height: 26px; border-radius: 7px;
@@ -897,6 +917,9 @@
   <symbol id="i-gpt" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.25"><rect x="4.3" y="1.6" width="7.4" height="12.8" rx="3.7"/><rect x="4.3" y="1.6" width="7.4" height="12.8" rx="3.7" transform="rotate(60 8 8)"/><rect x="4.3" y="1.6" width="7.4" height="12.8" rx="3.7" transform="rotate(120 8 8)"/></g></symbol>
   <symbol id="i-barre" viewBox="0 0 16 16"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path stroke="currentColor" stroke-width="1.4" d="M6 3v10"/></symbol>
   <symbol id="i-liste" viewBox="0 0 16 16"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path stroke="currentColor" stroke-width="1.4" d="M9.2 3v10"/></symbol>
+  <symbol id="i-son" viewBox="0 0 16 16"><path fill="currentColor" d="M2.5 6h2.2L8 3.2v9.6L4.7 10H2.5z"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M10.5 5.6a3.4 3.4 0 0 1 0 4.8M12.4 3.8a6 6 0 0 1 0 8.4"/></symbol>
+  <symbol id="i-son-coupe" viewBox="0 0 16 16"><path fill="currentColor" d="M2.5 6h2.2L8 3.2v9.6L4.7 10H2.5z"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="m10.5 6 4 4m0-4-4 4"/></symbol>
+  <symbol id="i-chevrons" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="m5 6.2 3-3 3 3M5 9.8l3 3 3-3"/></symbol>
   <symbol id="i-micro"viewBox="0 0 16 16"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5"/></symbol>
 </svg>
 
@@ -1032,13 +1055,20 @@
           </button>
           <button id="dock-stop" class="dock-stop" type="button" title="Arrêter et analyser" aria-label="Arrêter et analyser"><span></span></button>
           <span class="dock-espace"></span>
-          <span id="dock-micro" class="dock-micro" title="Micro utilisé (à changer dans Réglages → Enregistrement)"><svg><use href="#i-micro"/></svg><span></span></span>
+          <button id="dock-micro" class="dock-choix" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-micro" title="Choisir le micro">
+            <svg aria-hidden="true"><use href="#i-micro"/></svg><span class="nom">Micro</span><svg class="chevrons" aria-hidden="true"><use href="#i-chevrons"/></svg>
+          </button>
+          <button id="dock-son" class="dock-choix" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-son" title="Son du Mac : la voix de tes interlocuteurs">
+            <svg aria-hidden="true"><use href="#i-son"/></svg><span class="nom">Son du Mac</span><svg class="chevrons" aria-hidden="true"><use href="#i-chevrons"/></svg>
+          </button>
           <select id="dock-langue" class="dock-langue" aria-label="Langue de l'appel" title="Langue parlée pendant l'appel">
             <option value="fr">Français</option><option value="en">Anglais</option><option value="es">Espagnol</option>
             <option value="de">Allemand</option><option value="it">Italien</option><option value="auto" title="Whisper devine la langue">Auto</option>
           </select>
         </div>
       </div>
+      <div id="menu-micro" class="menu menu-dock" role="menu" aria-label="Micro" hidden></div>
+      <div id="menu-son" class="menu menu-dock" role="menu" aria-label="Son du Mac" hidden></div>
     </article>
     <article id="lecteur" class="lecteur selectionnable">
       <div class="vide-lecteur"><div><svg width="40" height="40"><use href="#i-doc"/></svg>Choisis un compte rendu</div></div>
@@ -1772,7 +1802,7 @@
       const d = new Date();
       $("#seance-date").textContent = "Aujourd'hui · " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
       ouvrirTranscription(direct.ouvert);
-      api("/api/micros").then((r) => { $("#dock-micro span").textContent = r.micro || r.micro_defaut || "Micro du système"; }).catch(() => {});
+      chargerPeripheriques();
       api("/api/reglages").then((r) => { $("#dock-langue").value = r.langue || "fr"; }).catch(() => {});
       setTimeout(() => { if (location.hash === "#comptes-rendus") $("#seance-notes").focus(); }, 50);
     }
@@ -1796,6 +1826,125 @@
     api("/api/reglages", { langue: ev.target.value }).then(() => message("Langue changée dès la phrase suivante, et gardée pour les prochains appels."))
       .catch((e) => message(e.message)));
   $("#dock-stop").addEventListener("click", () => $("#rec").click());
+
+  // Barre de l'appel : micro, son de l'ordinateur et sortie captée. Tout change tout de suite,
+  // sans couper l'enregistrement, et reste choisi pour les appels suivants.
+  const perif = { r: null, ouvert: null, etatSon: "" };
+  const attr = (t) => esc(t);
+  function majBoutonsPerif() {
+    const r = perif.r;
+    if (!r) return;
+    const micro = r.micro_utilise || r.micro || r.micro_defaut || "Micro du système";
+    $("#dock-micro .nom").textContent = micro;
+    $("#dock-micro").title = `Micro : ${micro} · clique pour en changer`;
+    const son = $("#dock-son"), refuse = r.son_systeme && perif.etatSon === "refusee";
+    son.classList.toggle("coupe", !r.son_systeme);
+    son.classList.toggle("alerte", refuse);
+    son.querySelector("use").setAttribute("href", r.son_systeme ? "#i-son" : "#i-son-coupe");
+    son.title = !r.son_systeme ? "Son du Mac coupé : seul ton micro est enregistré · clique pour le réactiver"
+      : refuse ? "Son du Mac non autorisé par macOS · clique pour voir quoi faire"
+      : "Son du Mac enregistré (voix de tes interlocuteurs) · clique pour le couper ou voir la sortie";
+  }
+  async function chargerPeripheriques() {
+    try {
+      perif.r = await api("/api/peripheriques");
+      majBoutonsPerif();
+      if (perif.ouvert) remplirMenuPerif(perif.ouvert);
+    } catch (_) {}
+  }
+  function remplirMenuPerif(id) {
+    const r = perif.r;
+    if (!r) return;
+    let html = "";
+    if (id === "menu-micro") {
+      const absent = r.micro && !r.micros.some((m) => m.id === r.micro);
+      html = `<div class="titre-menu">Micro</div>
+        <button type="button" role="menuitemradio" aria-checked="${!r.micro}" data-micro="">Micro du système${r.micro_defaut ? ` <span class="detail">· ${esc(r.micro_defaut)}</span>` : ""}</button>`
+        + r.micros.map((m) => `<button type="button" role="menuitemradio" aria-checked="${m.id === r.micro}" data-micro="${attr(m.id)}">${esc(m.nom)}</button>`).join("")
+        + (absent ? `<div class="note-menu alerte">${esc(r.micro)} est débranché : le micro du système le remplace.</div>` : "")
+        + `<hr><div class="note-menu">Change tout de suite, sans couper l'enregistrement. Un micro branché pendant l'appel n'apparaît qu'au suivant.</div>`;
+    } else {
+      const refuse = r.son_systeme && perif.etatSon === "refusee";
+      html = `<button type="button" role="menuitemcheckbox" aria-checked="${r.son_systeme}" data-son="${!r.son_systeme}">Enregistrer le son du Mac</button>
+        <div class="note-menu">La voix de tes interlocuteurs en visio. Le couper garde seulement ton micro, à partir de maintenant.</div>`
+        + (refuse ? `<div class="note-menu alerte">Non autorisé par macOS : Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran et audio système → active MiroRecap, puis relance l'app.</div>` : "");
+      if (r.choix_sortie) {
+        const absente = r.sortie && !r.sorties.includes(r.sortie);
+        html += `<hr><div class="titre-menu">Sortie captée</div>
+          <button type="button" role="menuitemradio" aria-checked="${!r.sortie}" data-sortie="">Sortie par défaut${r.sortie_defaut ? ` <span class="detail">· ${esc(r.sortie_defaut)}</span>` : ""}</button>`
+          + r.sorties.map((n) => `<button type="button" role="menuitemradio" aria-checked="${n === r.sortie}" data-sortie="${attr(n)}">${esc(n)}</button>`).join("")
+          + (absente ? `<div class="note-menu alerte">${esc(r.sortie)} est débranchée : la sortie par défaut est captée.</div>` : "")
+          + `<div class="note-menu">Choisis celle où tu entends l'appel (casque ou haut-parleurs).</div>`;
+      } else {
+        html += `<hr><div class="titre-menu">Sortie</div>
+          <div class="note-menu">Tout ce que joue le Mac est capté, quelle que soit la sortie : haut-parleurs, casque ou AirPods. Rien à choisir.</div>`;
+      }
+    }
+    // Menu redessiné pendant qu'il est ouvert : le clavier reste sur le même choix
+    const menu = $("#" + id), avant = [...menu.querySelectorAll("button")].indexOf(document.activeElement);
+    menu.innerHTML = html;
+    if (avant >= 0) menu.querySelectorAll("button")[avant]?.focus();
+  }
+  function fermerMenuPerif(rendreFocus) {
+    const id = perif.ouvert;
+    if (!id) return;
+    perif.ouvert = null;
+    $("#" + id).hidden = true;
+    const bouton = $(`[aria-controls="${id}"]`);
+    bouton.setAttribute("aria-expanded", "false");
+    if (rendreFocus) bouton.focus();
+  }
+  function ouvrirMenuPerif(bouton) {
+    const id = bouton.getAttribute("aria-controls");
+    if (perif.ouvert === id) return fermerMenuPerif(false);
+    fermerMenuPerif(false);
+    perif.ouvert = id;
+    const menu = $("#" + id);
+    remplirMenuPerif(id);
+    menu.hidden = false;
+    bouton.setAttribute("aria-expanded", "true");
+    // Au-dessus du bouton, sans dépasser de la page
+    const cadre = $("#seance").getBoundingClientRect(), b = bouton.getBoundingClientRect();
+    const gauche = Math.min(b.left - cadre.left, cadre.width - menu.offsetWidth - 12);
+    menu.style.left = Math.max(12, gauche) + "px";
+    menu.style.bottom = (cadre.bottom - b.top + 6) + "px";
+    (menu.querySelector('[aria-checked="true"]') || menu.querySelector("button"))?.focus();
+    chargerPeripheriques();   // relit l'état (et la liste des sorties, sur Windows)
+  }
+  for (const id of ["#dock-micro", "#dock-son"]) {
+    $(id).addEventListener("click", (ev) => { ev.stopPropagation(); ouvrirMenuPerif(ev.currentTarget); });
+  }
+  async function choisirPerif(donnees) {
+    fermerMenuPerif(true);
+    try {
+      perif.r = await api("/api/peripheriques", donnees);
+      majBoutonsPerif();
+      if (perif.r.message) message(perif.r.message);
+    } catch (e) { message(e.message); }
+  }
+  for (const id of ["#menu-micro", "#menu-son"]) {
+    const menu = $(id);
+    menu.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const b = ev.target.closest("button");
+      if (!b) return;
+      if (b.getAttribute("aria-checked") === "true" && !b.dataset.son) return fermerMenuPerif(true);   // déjà choisi
+      if (b.dataset.micro !== undefined) choisirPerif({ micro: b.dataset.micro });
+      else if (b.dataset.son !== undefined) choisirPerif({ son_systeme: b.dataset.son === "true" });
+      else if (b.dataset.sortie !== undefined) choisirPerif({ sortie: b.dataset.sortie });
+    });
+    menu.addEventListener("keydown", (ev) => {
+      const items = [...menu.querySelectorAll("button")], i = items.indexOf(document.activeElement);
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        const n = items.length;
+        items[(i + (ev.key === "ArrowDown" ? 1 : n - 1) + (i < 0 && ev.key === "ArrowUp" ? 1 : 0)) % n]?.focus();
+      } else if (ev.key === "Escape") { ev.preventDefault(); fermerMenuPerif(true); }
+      else if (ev.key === "Tab") fermerMenuPerif(false);
+    });
+  }
+  document.addEventListener("click", () => fermerMenuPerif(false));
+  window.addEventListener("resize", () => fermerMenuPerif(false));
 
   // Sondée toutes les 0,7 s pendant l'enregistrement : le texte s'écrit pendant qu'on parle
   function suivreDirect(actif) {
@@ -2394,7 +2543,7 @@
     try {
       await api("/api/reglages", { son_systeme: actif });
       $("#son-systeme").setAttribute("aria-checked", actif);
-      $("#son-systeme-etat").textContent = actif ? "Activé · s'applique au prochain enregistrement" : "Désactivé · seul ton micro est enregistré";
+      $("#son-systeme-etat").textContent = actif ? "Activé · s'applique tout de suite, même pendant un appel" : "Désactivé · seul ton micro est enregistré";
     } catch (err) { message(err.message); }
   }
   // Niveaux en direct : micro (volume d'entrée) et capture du son du Mac
@@ -2422,6 +2571,11 @@
       if (ligne.closest("#moniteur") && !ecoute) return;
       afficherJauge(ligne, n.micro, classe, texte);
     });
+    if (n.enregistrement && (n.systeme || {}).etat !== perif.etatSon) {
+      perif.etatSon = (n.systeme || {}).etat || "";
+      majBoutonsPerif();
+      if (perif.ouvert === "menu-son") remplirMenuPerif("menu-son");
+    }
     // Son du Mac (uniquement pendant un enregistrement)
     const ligneSys = document.querySelector('#niveaux [data-n="systeme"]')?.closest(".niveau");
     if (ligneSys && n.enregistrement) {
@@ -2469,7 +2623,7 @@
     choix.innerHTML = options.join("");
     choix.value = r.micro || "";
     const absent = r.micro && !r.micros.some((m) => m.id === r.micro);
-    $("#micro-etat").textContent = absent ? "Débranché : le micro du système est utilisé" : "S'applique au prochain enregistrement";
+    $("#micro-etat").textContent = absent ? "Débranché : le micro du système est utilisé" : "S'applique tout de suite, même pendant un appel";
   }
   $("#micro-choix").addEventListener("focus", async () => {   // relit la liste : un casque branché depuis apparaît
     try { remplirMicros(await api("/api/micros")); } catch (_) {}
@@ -2478,7 +2632,7 @@
     try {
       const etaitActif = moniteurActif;
       if (etaitActif) await basculerMoniteur(false);
-      remplirMicros(await api("/api/reglages", { micro: ev.target.value }));
+      remplirMicros(await api("/api/peripheriques", { micro: ev.target.value }));
       if (etaitActif) await basculerMoniteur(true);
     } catch (e) { $("#micro-etat").textContent = "Erreur : " + e.message; }
   });

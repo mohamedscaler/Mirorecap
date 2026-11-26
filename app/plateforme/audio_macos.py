@@ -32,9 +32,21 @@ def capture_disponible():
     return OUTIL_CAPTURE.exists()
 
 
-def lancer_capture(fichier):
+# ScreenCaptureKit capte tout ce que le Mac joue, quelle que soit la sortie (haut-parleurs, casque,
+# AirPods) : il n'y a pas de sortie à choisir. Capter une seule sortie demanderait de changer
+# l'outil natif (nouveau moteur et DMG), sans rien gagner pour un appel.
+CHOIX_SORTIE = False
+
+
+def liste_sorties():
+    """Sorties audio qu'on peut choisir pour la capture : aucune sur Mac (tout est capté)."""
+    return [], ""
+
+
+def lancer_capture(fichier, sortie=""):
     """Démarre la capture du son du Mac dans un WAV. Le processus s'arrête par terminate()
-    (il finalise alors son fichier) ; un code de sortie non nul en moins de 4 s = refus."""
+    (il finalise alors son fichier) ; un code de sortie non nul en moins de 4 s = refus.
+    `sortie` est ignorée : tout le son du Mac est capté."""
     return subprocess.Popen([str(OUTIL_CAPTURE), str(fichier)], stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
 
