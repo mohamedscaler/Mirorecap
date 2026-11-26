@@ -24,7 +24,7 @@ $PY_SRC = Split-Path (uv python find 3.12)
 Copy-Item -Recurse $PY_SRC "$APP\python"
 $PY = Resolve-Path "$APP\python\python.exe"
 Get-ChildItem "$APP\python" -Recurse -Filter EXTERNALLY-MANAGED | Remove-Item -Force   # autorise pip dans ce Python
-& $PY -m ensurepip -q
+& $PY -m ensurepip
 & $PY -m pip install -q --no-cache-dir --upgrade pip
 & $PY -m pip install -q --no-cache-dir -r app\requirements-windows.txt
 & $PY -c "import sys, pystray, PIL, sounddevice, soundfile, anthropic, webview, faster_whisper, av, pyaudiowpatch, ctranslate2, clr; print('imports OK depuis', sys.prefix)"
