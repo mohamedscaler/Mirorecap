@@ -870,6 +870,8 @@
   body.barre-masquee #poignee-barre { display: none; }
   #poignee-liste { position: absolute; left: var(--larg-liste); }
   body.liste-masquee #poignee-liste { display: none; }
+  /* Windows : pas d'app Rappels */
+  body.windows #vers-rappels { display: none; }
 </style>
 </head>
 <body>
@@ -1365,6 +1367,55 @@
 <script>
   const JETON = "__JETON__";
   const $ = (s) => document.querySelector(s);
+
+  // ============ Windows ============
+  // Même interface que sur Mac : seuls quelques mots changent (PC, Explorateur, Paramètres…),
+  // y compris dans les textes ajoutés plus tard (messages, listes).
+  const WINDOWS = navigator.userAgent.includes("Windows");
+  const TEXTES_WINDOWS = [
+    [/ ?Au premier enregistrement, macOS demande l'autorisation « Enregistrement de l'écran et audio système » : seul l'audio est gardé\./g, ""],
+    [/macOS va te demander l'autorisation : accepte\./g, "Windows peut te demander l'accès au micro : accepte."],
+    [/Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran et audio système → active MiroRecap, puis relance l'app/g,
+      "vérifie qu'un haut-parleur ou un casque est actif (Paramètres → Système → Son), puis relance l'enregistrement"],
+    [/Refusé par macOS/g, "Impossible à capter"],
+    [/Corbeille du Mac/g, "Corbeille"],
+    [/le Finder/g, "l'Explorateur"],
+    [/vide = iCloud Drive/g, "vide = Documents"],
+    [/Une fenêtre Terminal s'ouvre : suis les 2 étapes affichées\./g, "Une fenêtre de commandes s'ouvre : connecte-toi, puis colle ici le jeton affiché à la fin."],
+    [/la fenêtre Terminal/g, "la fenêtre de commandes"],
+    [/fenêtre Terminal/g, "fenêtre de commandes"],
+    [/dans le Terminal/g, "dans la fenêtre de commandes"],
+    [/\bMac\b/g, "PC"],
+  ];
+  const aAdapter = /Mac|Finder|Terminal|iCloud/;
+  const texteWindows = (t) => TEXTES_WINDOWS.reduce((s, [motif, rempl]) => s.replace(motif, rempl), t);
+  function adapterWindows(noeud) {
+    if (noeud.nodeType === Node.TEXT_NODE) {
+      if (aAdapter.test(noeud.nodeValue)) {
+        const t = texteWindows(noeud.nodeValue);
+        if (t !== noeud.nodeValue) noeud.nodeValue = t;
+      }
+      return;
+    }
+    if (noeud.nodeType !== Node.ELEMENT_NODE) return;
+    const elements = [noeud, ...noeud.querySelectorAll("[placeholder], [title], [aria-label]")];
+    for (const el of elements) for (const attr of ["placeholder", "title", "aria-label"]) {
+      const v = el.getAttribute(attr);
+      if (v && aAdapter.test(v)) el.setAttribute(attr, texteWindows(v));
+    }
+    const marcheur = document.createTreeWalker(noeud, NodeFilter.SHOW_TEXT);
+    for (let n = marcheur.nextNode(); n; n = marcheur.nextNode()) adapterWindows(n);
+  }
+  if (WINDOWS) {
+    document.body.classList.add("windows");
+    adapterWindows(document.body);
+    new MutationObserver((changements) => {
+      for (const c of changements) {
+        if (c.type === "characterData") adapterWindows(c.target);
+        else c.addedNodes.forEach(adapterWindows);
+      }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
 
   // ============ Utilitaires ============
   async function api(chemin, donnees) {
@@ -1907,7 +1958,8 @@
   document.addEventListener("click", fermerMenuPlus);
   document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") fermerMenuPlus(); });
   // Dans la fenêtre de l'app (barre de titre intégrée) : on laisse la place aux feux tricolores
-  const marquerFenetre = () => document.body.classList.add("fenetre-mac");
+  // (sur Windows, la barre de titre reste celle du système)
+  const marquerFenetre = () => { if (!WINDOWS) document.body.classList.add("fenetre-mac"); };
   if (window.pywebview) marquerFenetre(); else window.addEventListener("pywebviewready", marquerFenetre);
   // La vue web recouvre la barre de titre : la bande du haut déplace la fenêtre (double-clic : agrandir)
   const dansBandeHaut = (ev) => document.body.classList.contains("fenetre-mac") && ev.button === 0 && ev.clientY < 40

@@ -61,6 +61,10 @@ URL_INSTALL = f"https://raw.githubusercontent.com/{DEPOT}/main/install-distant.s
 _fichier_version = DOSSIER_CODE / "VERSION"
 VERSION = _fichier_version.read_text().strip() if _fichier_version.exists() else "0"
 URL_DMG = f"https://github.com/{DEPOT}/releases/latest/download/MiroRecap.dmg"
+# Mise à jour complète : le DMG sur Mac, l'installateur sur Windows
+NOM_APP_COMPLETE = "MiroRecap-Setup.exe" if plateforme.WINDOWS else "MiroRecap.dmg"
+URL_APP_COMPLETE = f"https://github.com/{DEPOT}/releases/latest/download/{NOM_APP_COMPLETE}"
+ORDI = "PC" if plateforme.WINDOWS else "Mac"   # dans les messages : « ton PC », « ton Mac »
 INTERVALLE_VERIF = 3600  # vérifie toutes les heures
 FICHIER_CONFIG = DOSSIER_APP / "config.json"
 MODELES_WHISPER = plateforme.whisper.MODELES
@@ -240,7 +244,7 @@ def moteur_local():
     """Numéro du moteur livré dans l'app (Python + modules). Une mise à jour du code
     seul n'est possible que si elle est prévue pour ce même moteur."""
     try:
-        return (CODE_APP / "MOTEUR").read_text().strip() or "1"
+        return (CODE_APP / plateforme.FICHIER_MOTEUR).read_text().strip() or "1"
     except OSError:
         return "1"
 
@@ -260,11 +264,11 @@ def derniere_release():
         if "maj.json" in assets and "code.zip" in assets:
             with urllib.request.urlopen(assets["maj.json"], timeout=15) as r:
                 infos = json.loads(r.read().decode())
-            if str(infos.get("moteur")) == moteur_local() and infos.get("sha256"):
+            if str(infos.get(plateforme.CLE_MOTEUR)) == moteur_local() and infos.get("sha256"):
                 return {"version": version, "type": "code", "code": assets["code.zip"],
                         "sha256": infos["sha256"], "taille": infos.get("taille", 0)}
-        # Sinon, l'app complète, une fois son DMG construit
-        if "MiroRecap.dmg" in assets:
+        # Sinon, l'app complète, une fois son DMG (ou son installateur Windows) construit
+        if NOM_APP_COMPLETE in assets:
             return {"version": version, "type": "complete"}
         return None
     except Exception:
@@ -593,9 +597,9 @@ def tester_son_systeme():
             niveau = 0.0
     if niveau < 0.001:
         return {"ok": False, "message": "La capture tourne mais aucun son n'a été reçu. Vérifie que le volume "
-                                        f"du Mac n'est pas coupé, puis réessaie. ({bilan or 'aucun bloc audio'})"}
+                                        f"du {ORDI} n'est pas coupé, puis réessaie. ({bilan or 'aucun bloc audio'})"}
     SON_SYSTEME.update(etat="ok", message="")
-    return {"ok": True, "message": "Son du Mac OK : la voix de tes interlocuteurs sera enregistrée."}
+    return {"ok": True, "message": f"Son du {ORDI} OK : la voix de tes interlocuteurs sera enregistrée."}
 
 
 def mixer_pistes(micro, systeme):
@@ -747,7 +751,7 @@ def assurer_modele(repo=None):
         finally:
             fini.set()
         MODELE.update(etat="pret", fait=total, message="")
-        notifier("Transcription prête", "Le modèle Whisper est installé sur ton Mac.")
+        notifier("Transcription prête", f"Le modèle Whisper est installé sur ton {ORDI}.")
         return modele_local(repo) or repo
 
 
@@ -1433,6 +1437,7 @@ def trouver_claude_code():
     candidats = [
         shutil.which("claude"),
         Path.home() / ".local" / "bin" / "claude",
+        Path.home() / ".local" / "bin" / "claude.exe",
         Path.home() / ".claude" / "local" / "claude",
         Path("/opt/homebrew/bin/claude"),
         Path("/usr/local/bin/claude"),
@@ -1473,13 +1478,36 @@ def connecter_claude_code():
             claude = trouver_claude_code()
             if not claude:
                 CONNEXION.update(etat="installation", message="Installation de Claude Code…", url="")
-                subprocess.run(["/bin/bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
-                               capture_output=True, text=True, timeout=900)
+                if plateforme.WINDOWS:
+                    subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                                    "irm https://claude.ai/install.ps1 | iex"], capture_output=True, text=True,
+                                   timeout=900, creationflags=subprocess.CREATE_NO_WINDOW)
+                else:
+                    subprocess.run(["/bin/bash", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
+                                   capture_output=True, text=True, timeout=900)
                 claude = trouver_claude_code()
                 if not claude:
                     raise RuntimeError("l'installation de Claude Code a échoué")
 
             FICHIER_CONNEXION.unlink(missing_ok=True)
+            if plateforme.WINDOWS:
+                # Pas d'outil « script » sur Windows : la fenêtre de commandes affiche le jeton à la fin,
+                # l'utilisateur le colle dans MiroRecap (envoyer_code_claude)
+                env = env_claude_code()
+                subprocess.Popen(["cmd", "/k", "title MiroRecap · connexion à Claude && echo Connecte-toi dans le "
+                                  "navigateur, puis copie le jeton affiche a la fin (sk-ant-oat...) et colle-le dans "
+                                  "MiroRecap. && echo. && " + subprocess.list2cmdline([claude, "setup-token"])],
+                                 env=env, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                CONNEXION.update(etat="terminal", url="", message="Connecte-toi dans le navigateur, puis colle ici le "
+                                 "jeton affiché à la fin dans la fenêtre de commandes (il commence par sk-ant-oat).")
+                fin = time.time() + 900
+                while time.time() < fin and CONNEXION["etat"] == "terminal":
+                    time.sleep(1)
+                if CONNEXION["etat"] == "annule":
+                    CONNEXION.update(etat="", message="")
+                elif CONNEXION["etat"] == "terminal":
+                    raise RuntimeError("connexion non terminée (délai dépassé)")
+                return
             commande = DOSSIER_APP / "Connexion à Claude.command"
             # « script » enregistre la session tout en gardant un vrai terminal ;
             # fenêtre élargie à 220 colonnes pour que le jeton tienne sur une ligne
@@ -1931,12 +1959,15 @@ def appeler_ia_texte(systeme, contenu):
 # --- Connexion à ChatGPT (Codex CLI) -------------------------------------------------
 
 DOSSIER_BIN = Path.home() / ".local" / "bin"
-URL_CODEX = "https://github.com/openai/codex/releases/latest/download/codex-aarch64-apple-darwin.tar.gz"
+URL_CODEX = ("https://github.com/openai/codex/releases/latest/download/codex-x86_64-pc-windows-msvc.exe.zip"
+             if plateforme.WINDOWS else
+             "https://github.com/openai/codex/releases/latest/download/codex-aarch64-apple-darwin.tar.gz")
 CONNEXION_GPT = {"etat": "", "message": "", "url": ""}
 
 
 def trouver_codex():
-    for c in (shutil.which("codex"), DOSSIER_BIN / "codex", Path("/opt/homebrew/bin/codex"), Path("/usr/local/bin/codex")):
+    for c in (shutil.which("codex"), DOSSIER_BIN / "codex", DOSSIER_BIN / "codex.exe",
+              Path("/opt/homebrew/bin/codex"), Path("/usr/local/bin/codex")):
         if c and Path(c).exists():
             return str(c)
     return None
@@ -1966,12 +1997,20 @@ def installer_codex():
                 fait += len(bloc)
                 if total:
                     CONNEXION_GPT["message"] = f"Installation de ChatGPT pour MiroRecap… {int(100 * fait / total)} %"
-        with tarfile.open(archive) as t:
-            membre = next(m for m in t.getmembers() if m.isfile() and m.name.split("/")[-1].startswith("codex"))
-            membre.name = "codex"
-            t.extract(membre, tmp)
-        cible = DOSSIER_BIN / "codex"
-        shutil.move(str(Path(tmp) / "codex"), str(cible))
+        nom = "codex.exe" if plateforme.WINDOWS else "codex"
+        if plateforme.WINDOWS:
+            import zipfile
+            with zipfile.ZipFile(archive) as z:
+                membre = next(m for m in z.namelist() if m.split("/")[-1].lower().endswith(".exe"))
+                with z.open(membre) as source, open(Path(tmp) / nom, "wb") as sortie:
+                    shutil.copyfileobj(source, sortie)
+        else:
+            with tarfile.open(archive) as t:
+                membre = next(m for m in t.getmembers() if m.isfile() and m.name.split("/")[-1].startswith("codex"))
+                membre.name = "codex"
+                t.extract(membre, tmp)
+        cible = DOSSIER_BIN / nom
+        shutil.move(str(Path(tmp) / nom), str(cible))
         cible.chmod(0o755)
     return str(cible)
 
@@ -2060,8 +2099,7 @@ CONFIG_CLAUDE_DESKTOP = plateforme.systeme.CONFIG_CLAUDE_DESKTOP
 
 def python_moteur():
     """Python de l'app (dans le bundle) : celui qui lancera le connecteur."""
-    candidat = CODE_APP.parent / "python" / "bin" / "python3"
-    return str(candidat if candidat.exists() else Path(sys.executable))
+    return str(plateforme.systeme.python_moteur(CODE_APP))
 
 
 def ecrire_lanceur_mcp():
@@ -2078,7 +2116,7 @@ def version(d):
     except Exception:
         return (0,)
 
-candidats = [Path.home() / "Library" / "Application Support" / "MiroRecap" / "code" / "actuel", Path({str(CODE_APP)!r})]
+candidats = [Path({str(DOSSIER_CODES / "actuel")!r}), Path({str(CODE_APP)!r})]
 valides = [d for d in candidats if (d / "mcp_serveur.py").exists() and not (d / ".defectueux").exists()]
 runpy.run_path(str(max(valides, key=version) / "mcp_serveur.py"), run_name="__main__")
 """, encoding="utf-8")
@@ -3337,7 +3375,7 @@ class App:
             version_zip = (nouveau / "VERSION").read_text().strip()
             if not (nouveau / "app.py").exists() or version_zip != infos["version"]:
                 raise RuntimeError("archive incomplète")
-            if (nouveau / "MOTEUR").read_text().strip() != moteur_local():
+            if (nouveau / plateforme.FICHIER_MOTEUR).read_text().strip() != moteur_local():
                 raise RuntimeError("code prévu pour un autre moteur")
             # Rotation : actuel → precedent, nouveau → actuel (renommages instantanés)
             actuel, precedent = DOSSIER_CODES / "actuel", DOSSIER_CODES / "precedent"
@@ -3379,14 +3417,17 @@ class App:
             os.environ["MIRORECAP_FENETRE"] = "1"
         else:
             os.environ.pop("MIRORECAP_FENETRE", None)
-        sys.stdout.flush()
+        if sys.stdout:
+            sys.stdout.flush()
         demarreur = CODE_APP / "demarrage.py"
         script = demarreur if demarreur.exists() else DOSSIER_CODE / "app.py"
-        os.execv(sys.executable, [sys.executable, str(script)])
+        plateforme.systeme.relancer([sys.executable, str(script)])
 
     def _installer_maj(self, automatique):
         dossier = DOSSIER_APP / "maj"
         dossier.mkdir(parents=True, exist_ok=True)
+        if plateforme.WINDOWS:
+            return self._installer_maj_windows(dossier, automatique)
         dmg = dossier / "MiroRecap.dmg"
         try:
             # 1. Téléchargement suivi (barre de progression dans la fenêtre et la barre des menus)
@@ -3436,6 +3477,34 @@ class App:
         time.sleep(1.5)   # laisse la fenêtre afficher « Installation… »
         self.fermer_pour_maj()
 
+    def _installer_maj_windows(self, dossier, automatique):
+        """Windows : télécharge MiroRecap-Setup.exe puis le lance en mode silencieux. Il attend
+        que l'app soit fermée, la remplace (réglages et comptes rendus conservés) et la relance."""
+        installateur = dossier / NOM_APP_COMPLETE
+        try:
+            with urllib.request.urlopen(URL_APP_COMPLETE, timeout=60) as reponse, open(installateur, "wb") as fichier:
+                self.maj_progression["total"] = int(reponse.headers.get("Content-Length") or 0)
+                while True:
+                    bloc = reponse.read(1 << 20)
+                    if not bloc:
+                        break
+                    fichier.write(bloc)
+                    self.maj_progression["fait"] += len(bloc)
+            if installateur.stat().st_size < 50_000_000:
+                raise RuntimeError("fichier téléchargé incomplet")
+        except Exception as e:
+            self.maj_en_cours = False
+            self.maj_progression = {"phase": "", "fait": 0, "total": 0}
+            installateur.unlink(missing_ok=True)
+            notifier("Mise à jour impossible pour l'instant", str(e))
+            return
+        self.maj_progression["phase"] = "installation"
+        CONFIG["version_precedente"] = VERSION
+        sauver_config(CONFIG)
+        plateforme.systeme.lancer_installateur(installateur, DOSSIER_APP / "maj.log", automatique)
+        time.sleep(1.5)   # laisse la fenêtre afficher « Installation… »
+        self.fermer_pour_maj()
+
     def fermer_pour_maj(self):
         """Ferme l'app proprement pour laisser l'installateur la remplacer."""
         try:
@@ -3448,7 +3517,8 @@ class App:
             self.serveur.shutdown()
         except Exception:
             pass
-        sys.stdout.flush()
+        if sys.stdout:
+            sys.stdout.flush()
         os._exit(0)   # le lanceur natif s'arrête avec nous
 
     def garder_notes(self, notes):

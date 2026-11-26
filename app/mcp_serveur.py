@@ -13,7 +13,11 @@ from datetime import datetime
 from pathlib import Path
 
 VERSION_PROTOCOLE = "2025-06-18"
-DOSSIER_APP = Path.home() / "Library" / "Application Support" / "MiroRecap"
+if sys.platform == "win32":
+    import os
+    DOSSIER_APP = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "MiroRecap"
+else:
+    DOSSIER_APP = Path.home() / "Library" / "Application Support" / "MiroRecap"
 ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
 MOTIF_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_(\d{2})h(\d{2})")
 
@@ -21,16 +25,31 @@ MOTIF_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_(\d{2})h(\d{2})")
 # --- Lecture des comptes rendus ---------------------------------------------------
 
 def dossier_sortie():
-    """Même règle que l'app : dossier choisi, sinon iCloud Drive, sinon ~/Comptes-rendus."""
+    """Même règle que l'app : dossier choisi, sinon iCloud Drive (Mac) ou Documents (Windows), sinon ~/Comptes-rendus."""
     try:
         config = json.loads((DOSSIER_APP / "config.json").read_text(encoding="utf-8"))
     except Exception:
         config = {}
     if config.get("dossier_sortie"):
         return Path(config["dossier_sortie"]).expanduser()
+    if sys.platform == "win32":
+        return documents_windows() / "Comptes-rendus"
     if ICLOUD.exists():
         return ICLOUD / "Comptes-rendus"
     return Path.home() / "Comptes-rendus"
+
+
+def documents_windows():
+    """Dossier Documents réel (OneDrive le cas échéant), comme plateforme/systeme_windows.py."""
+    try:
+        import ctypes
+        guid = (ctypes.c_ubyte * 16).from_buffer_copy(bytes.fromhex("D09AD3FD8F23AF46ADB46C85480369C7"))
+        chemin = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(chemin)) == 0 and chemin.value:
+            return Path(chemin.value)
+    except Exception:
+        pass
+    return Path.home() / "Documents"
 
 
 def projets():
@@ -249,6 +268,12 @@ def traiter(message):
 
 
 def main():
+    # Le protocole est en UTF-8 (Windows utiliserait sinon l'encodage de la console)
+    for flux in (sys.stdin, sys.stdout):
+        try:
+            flux.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
     for ligne in sys.stdin:
         ligne = ligne.strip()
         if not ligne:

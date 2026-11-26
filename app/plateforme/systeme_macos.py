@@ -10,6 +10,7 @@ DOSSIER_APP = Path.home() / "Library" / "Application Support" / "MiroRecap"
 ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
 CONFIG_CLAUDE_DESKTOP = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
 NOM_GESTIONNAIRE = "Finder"
+RAPPELS = True   # app Rappels disponible (masquée sur Windows)
 
 
 def dossier_sortie_defaut():
@@ -168,6 +169,19 @@ def python_fenetre():
     """Python nommé « MiroRecap » (créé à la construction) : c'est ce nom qu'affiche le Dock."""
     python = Path(sys.executable).with_name("MiroRecap")
     return python if python.exists() else Path(sys.executable)
+
+
+def python_moteur(code_app):
+    """Python de l'app (dans le bundle) : celui qui lancera le connecteur MCP."""
+    candidat = code_app.parent / "python" / "bin" / "python3"
+    return candidat if candidat.exists() else Path(sys.executable)
+
+
+def relancer(args, env=None):
+    """Remplace ce processus par un nouveau (même PID : le lanceur natif ne voit rien)."""
+    if env is not None:
+        os.environ.update(env)
+    os.execv(sys.executable, [str(a) for a in args])
 
 
 def installer_signaux(fenetre_demandee, arret):

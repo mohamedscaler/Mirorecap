@@ -1,0 +1,15 @@
+# Modules embarqués dans MiroRecap pour Windows (moteur numéroté dans MOTEUR_WINDOWS)
+# Transcription : faster-whisper (CTranslate2, processeur ou carte NVIDIA) ; il apporte PyAV
+# (ffmpeg intégré), utilisé aussi pour convertir les audios importés.
+pystray
+pillow
+sounddevice
+soundfile
+numpy
+scipy
+anthropic
+pywebview
+faster-whisper
+PyAudioWPatch
+huggingface_hub
+tqdm
