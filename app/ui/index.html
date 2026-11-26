@@ -760,21 +760,68 @@
   .colonne-liste { width: var(--larg-liste); min-width: 0; flex-shrink: 0; }
   body.liste-masquee .colonne-liste { display: none; }
   #vue-comptes-rendus { position: relative; }
-  /* Transcription en direct : panneau flottant pendant l'enregistrement */
-  .direct {
-    position: absolute; right: 20px; bottom: 20px; z-index: 20; width: min(520px, 46%); max-height: 46%;
-    display: flex; flex-direction: column; border-radius: 16px; padding: 12px 14px 10px;
-    background: var(--verre-fort); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%);
-    box-shadow: inset 0 0 0 1px var(--verre-bord), var(--ombre-flottante, 0 10px 32px rgba(0,0,0,.18));
-  }
-  .direct .entete-direct { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
-  .direct .entete-direct .point-rouge { width: 8px; height: 8px; border-radius: 50%; background: var(--rouge); animation: clignote 1.4s ease-in-out infinite; }
+  /* Séance : page de notes + barre d'enregistrement en bas, pendant l'appel */
+  .seance { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+  .seance-page { flex: 1; overflow-y: auto; padding: 44px 48px 150px; }
+  .seance-page > * { max-width: 680px; margin-left: auto; margin-right: auto; }
+  .seance-titre { display: block; width: 100%; border: 0; outline: 0; background: none; color: var(--texte);
+    font-family: inherit; font-size: 28px; font-weight: 600; line-height: 1.2; letter-spacing: -.01em; padding: 0; }
+  .seance-titre::placeholder { color: var(--second); opacity: .7; }
+  .seance-puces { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; margin-bottom: 22px; }
+  .seance-puces .puce { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: 999px;
+    font-size: 12px; color: var(--second); box-shadow: inset 0 0 0 1px var(--separateur); }
+  .seance-puces .puce .point-rouge { width: 7px; height: 7px; border-radius: 50%; background: var(--rouge); animation: clignote 1.4s ease-in-out infinite; }
+  .seance-puces .puce .chrono { font: inherit; font-variant-numeric: tabular-nums; color: var(--texte); min-width: 0; }
   @keyframes clignote { 50% { opacity: .3; } }
-  .direct .info { margin-left: auto; font-weight: 400; font-size: 11px; color: var(--second); }
-  .direct .texte-direct { overflow-y: auto; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; color: var(--texte); }
-  .direct .texte-direct .qui { font-weight: 600; }
-  .direct .texte-direct .heure { color: var(--second); font-variant-numeric: tabular-nums; margin-right: 4px; }
-  .direct .attente { color: var(--second); }
+  .seance.transcription-ouverte .seance-page { padding-bottom: calc(min(46vh, 380px) + 110px); }   /* le texte ne passe jamais sous le panneau */
+  .seance-notes { display: block; width: 100%; min-height: 140px; overflow: hidden; resize: none; border: 0; outline: 0; background: none;
+    color: var(--texte); font-family: inherit; font-size: 15px; line-height: 1.65; padding: 0; }
+  .seance-notes::placeholder { color: var(--second); opacity: .75; }
+  textarea.seance-notes, input.seance-titre { box-shadow: none; border-radius: 0; background: none; border: 0; outline: 0; }
+
+  .dock { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 20;
+    width: min(640px, calc(100% - 32px)); display: flex; flex-direction: column; border-radius: 22px; overflow: hidden;
+    background: var(--verre-fort); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%);
+    box-shadow: inset 0 0 0 1px var(--verre-bord), 0 12px 36px rgba(0,0,0,.18); }
+  .dock-transcription { display: flex; flex-direction: column; height: min(46vh, 380px); border-bottom: 1px solid var(--separateur); }
+  .dock-transcription[hidden] { display: none; }
+  .dock-tete { display: flex; align-items: center; gap: 4px; padding: 10px 12px 4px 16px; font-size: 12px; color: var(--second); }
+  .dock-tete .info { flex: 1; }
+  .dock-tete button { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: var(--second); }
+  .dock-tete button:hover { background: var(--survol, var(--remplissage-fort)); color: var(--texte); }
+  .bulles { flex: 1; overflow-y: auto; padding: 6px 14px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .bulle { max-width: 82%; padding: 8px 12px; border-radius: 14px; font-size: 13px; line-height: 1.5;
+    background: var(--remplissage-fort); color: var(--texte); align-self: flex-start; }
+  .bulle.moi { align-self: flex-end; background: color-mix(in srgb, var(--bleu) 16%, transparent); }
+  .bulle .heure { display: block; font-size: 10.5px; color: var(--second); font-variant-numeric: tabular-nums; margin-bottom: 2px; }
+  .bulle.provisoire { color: var(--second); }
+  .points { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
+  .points i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: point 1.2s infinite ease-in-out; }
+  .points i:nth-child(2) { animation-delay: .15s; } .points i:nth-child(3) { animation-delay: .3s; }
+  @keyframes point { 0%, 60%, 100% { opacity: .25; transform: none; } 30% { opacity: 1; transform: translateY(-2px); } }
+  .bulles .attente { margin: auto; color: var(--second); font-size: 12.5px; text-align: center; }
+
+  .dock-barre { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
+  .dock-onde { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 10px; border-radius: 12px; color: var(--second); }
+  .dock-onde:hover, .dock-onde[aria-expanded="true"] { background: var(--remplissage-fort); }
+  .dock-onde .barres { display: inline-flex; align-items: center; gap: 3px; height: 20px; }
+  .dock-onde .barres i { width: 3.5px; border-radius: 2px; background: var(--vert);
+    height: calc(5px + 15px * var(--n, 0) * var(--f, 1)); transition: height .12s linear; }
+  .dock-onde .barres i:nth-child(1) { --f: .65; } .dock-onde .barres i:nth-child(2) { --f: 1; }
+  .dock-onde .barres i:nth-child(3) { --f: .8; } .dock-onde .barres i:nth-child(4) { --f: .5; }
+  .dock-onde svg { width: 11px; height: 11px; transform: rotate(-90deg); transition: transform .2s; }
+  .dock-onde[aria-expanded="true"] svg { transform: rotate(90deg); }
+  .dock-stop { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; }
+  .dock-stop:hover { background: var(--remplissage-fort); }
+  .dock-stop span { width: 13px; height: 13px; border-radius: 3px; background: var(--rouge); }
+  .dock-stop:disabled { opacity: .5; }
+  .dock-espace { flex: 1; }
+  .dock-micro { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; font-size: 12.5px; color: var(--second);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 6px; }
+  .dock-micro svg { flex-shrink: 0; width: 13px; height: 13px; }
+  .dock-langue { width: auto; flex: 0 0 auto; box-shadow: none; border: 0; background: none; color: var(--second); font-family: inherit; font-size: 12.5px; padding: 6px 4px; border-radius: 8px; }
+  .dock-langue:hover { background: var(--remplissage-fort); color: var(--texte); }
+  @media (max-width: 720px) { .dock-micro { display: none; } .seance-page { padding: 28px 20px 150px; } }
 
   .bouton-panneau {
     position: fixed; top: 2px; z-index: 50; width: 26px; height: 26px; border-radius: 7px;
@@ -951,10 +998,40 @@
       </div>
       <p id="liste-vide" class="vide" hidden>Aucun compte rendu pour l'instant.<br>Lance un enregistrement ou dépose un audio dans le dossier d'import.</p>
     </div>
-    <aside id="direct" class="direct" hidden aria-label="Transcription en direct">
-      <div class="entete-direct"><span class="point-rouge" aria-hidden="true"></span>En direct<span id="direct-info" class="info"></span></div>
-      <div id="direct-texte" class="texte-direct" aria-live="off"><span class="attente">Le texte apparaît par morceaux de 10 à 30 secondes…</span></div>
-    </aside>
+    <article id="seance" class="seance" hidden aria-label="Appel en cours">
+      <div class="seance-page">
+        <input id="seance-titre" class="seance-titre" type="text" maxlength="200" placeholder="Nouvel appel" aria-label="Titre de l'appel" autocomplete="off">
+        <div class="seance-puces">
+          <span class="puce"><span class="point-rouge" aria-hidden="true"></span><span id="seance-chrono" class="chrono">00:00</span></span>
+          <span class="puce" id="seance-date">Aujourd'hui</span>
+          <span class="puce">Moi</span>
+        </div>
+        <textarea id="seance-notes" class="seance-notes" placeholder="Écris tes notes ici : décisions, chiffres, choses à ne pas oublier. L'IA les reprend dans le compte rendu." aria-label="Notes de l'appel" autocomplete="off"></textarea>
+      </div>
+      <div class="dock">
+        <section id="direct" class="dock-transcription" hidden aria-label="Transcription en direct">
+          <div class="dock-tete">
+            <span id="direct-info" class="info">Transcription en direct</span>
+            <button id="direct-copier" type="button" title="Copier la transcription" aria-label="Copier la transcription"><svg width="14" height="14"><use href="#i-copier"/></svg></button>
+            <button id="direct-reduire" type="button" title="Réduire" aria-label="Réduire la transcription"><svg width="14" height="14"><path stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M3 7h8"/></svg></button>
+          </div>
+          <div id="direct-texte" class="bulles" aria-live="off"><span class="attente">Parle : le texte s'affiche au fil de la conversation.</span></div>
+        </section>
+        <div class="dock-barre">
+          <button id="dock-onde" class="dock-onde" type="button" aria-expanded="false" aria-controls="direct" title="Afficher la transcription">
+            <span class="barres" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <svg aria-hidden="true"><use href="#i-chevron"/></svg>
+          </button>
+          <button id="dock-stop" class="dock-stop" type="button" title="Arrêter et analyser" aria-label="Arrêter et analyser"><span></span></button>
+          <span class="dock-espace"></span>
+          <span id="dock-micro" class="dock-micro" title="Micro utilisé (à changer dans Réglages → Enregistrement)"><svg><use href="#i-micro"/></svg><span></span></span>
+          <select id="dock-langue" class="dock-langue" aria-label="Langue de l'appel" title="Langue parlée pendant l'appel">
+            <option value="fr">Français</option><option value="en">Anglais</option><option value="es">Espagnol</option>
+            <option value="de">Allemand</option><option value="it">Italien</option><option value="auto" title="Whisper devine la langue">Auto</option>
+          </select>
+        </div>
+      </div>
+    </article>
     <article id="lecteur" class="lecteur selectionnable">
       <div class="vide-lecteur"><div><svg width="40" height="40"><use href="#i-doc"/></svg>Choisis un compte rendu</div></div>
     </article>
@@ -1463,6 +1540,7 @@
     const m = String(Math.floor(e.duree / 60)).padStart(2, "0");
     const s = String(e.duree % 60).padStart(2, "0");
     $("#chrono").textContent = `${m}:${s}`;
+    $("#seance-chrono").textContent = `${m}:${s}`;
 
     let statut = "Prêt à enregistrer";
     if (e.enregistrement) statut = "Enregistrement…";
@@ -1601,28 +1679,89 @@
     dernierConnu = cle;
   }
 
-  // Transcription en direct : sondée toutes les 2 s pendant l'enregistrement
-  const direct = { minuteur: null, texte: null };
+  // ============ Séance : page de notes + transcription en direct pendant l'appel ============
+  const direct = { minuteur: null, cle: null, texte: "", ouvert: false };
+  let seanceActive = false, minuteurNotes = null;
+  try { direct.ouvert = localStorage.getItem("direct-ouvert") === "1"; } catch (_) {}
+
+  function notesSeance() { return { titre: $("#seance-titre").value, notes: $("#seance-notes").value }; }
+  function envoyerNotes() {
+    clearTimeout(minuteurNotes); minuteurNotes = null;
+    if (seanceActive) api("/api/notes", notesSeance()).catch(() => {});
+  }
+  function ajusterNotes() {   // le champ grandit avec le texte : la page défile, rien n'est caché
+    const z = $("#seance-notes"); z.style.height = "auto"; z.style.height = z.scrollHeight + "px";
+  }
+  $("#seance-notes").addEventListener("input", ajusterNotes);
+  ["#seance-titre", "#seance-notes"].forEach((sel) => $(sel).addEventListener("input", () => {
+    clearTimeout(minuteurNotes); minuteurNotes = setTimeout(envoyerNotes, 800);
+  }));
+
+  function afficherSeance(actif) {
+    if (actif === seanceActive) return;
+    seanceActive = actif;
+    $("#seance").hidden = !actif;
+    $("#lecteur").hidden = actif;
+    if (actif) {
+      $("#seance-titre").value = ""; $("#seance-notes").value = ""; ajusterNotes();
+      const d = new Date();
+      $("#seance-date").textContent = "Aujourd'hui · " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      ouvrirTranscription(direct.ouvert);
+      api("/api/micros").then((r) => { $("#dock-micro span").textContent = r.micro || r.micro_defaut || "Micro du système"; }).catch(() => {});
+      api("/api/reglages").then((r) => { $("#dock-langue").value = r.langue || "fr"; }).catch(() => {});
+      setTimeout(() => { if (location.hash === "#comptes-rendus") $("#seance-notes").focus(); }, 50);
+    }
+  }
+  function ouvrirTranscription(ouvert) {
+    direct.ouvert = ouvert;
+    try { localStorage.setItem("direct-ouvert", ouvert ? "1" : "0"); } catch (_) {}
+    $("#direct").hidden = !ouvert;
+    $("#seance").classList.toggle("transcription-ouverte", ouvert);
+    $("#dock-onde").setAttribute("aria-expanded", ouvert);
+    $("#dock-onde").title = ouvert ? "Masquer la transcription" : "Afficher la transcription";
+    if (ouvert) { const z = $("#direct-texte"); z.scrollTop = z.scrollHeight; }
+  }
+  $("#dock-onde").addEventListener("click", () => ouvrirTranscription(!direct.ouvert));
+  $("#direct-reduire").addEventListener("click", () => ouvrirTranscription(false));
+  $("#direct-copier").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(direct.texte); message(direct.texte ? "Transcription copiée." : "Rien à copier pour l'instant."); }
+    catch (_) { message("Copie impossible."); }
+  });
+  $("#dock-langue").addEventListener("change", (ev) =>
+    api("/api/reglages", { langue: ev.target.value }).then(() => message("Langue changée : prise en compte dès la phrase suivante."))
+      .catch((e) => message(e.message)));
+  $("#dock-stop").addEventListener("click", () => $("#rec").click());
+
+  // Sondée toutes les 0,7 s pendant l'enregistrement : le texte s'écrit pendant qu'on parle
   function suivreDirect(actif) {
-    if (actif && !direct.minuteur) { sonderDirect(); direct.minuteur = setInterval(sonderDirect, 2000); }
-    if (!actif && direct.minuteur) { clearInterval(direct.minuteur); direct.minuteur = null; $("#direct").hidden = true; direct.texte = null; }
+    afficherSeance(actif);
+    if (actif && !direct.minuteur) { sonderDirect(); direct.minuteur = setInterval(sonderDirect, 700); }
+    if (!actif && direct.minuteur) { clearInterval(direct.minuteur); direct.minuteur = null; direct.cle = null; }
+  }
+  function bulle(heure, qui, texte, provisoire) {
+    const classe = "bulle" + (qui === "Moi" ? " moi" : "") + (provisoire ? " provisoire" : "");
+    const tete = esc(heure) + (qui ? " · " + esc(qui) : "");
+    return `<div class="${classe}"><span class="heure">${tete}</span>${esc(texte)}${provisoire ? '<span class="points" aria-hidden="true"><i></i><i></i><i></i></span>' : ""}</div>`;
   }
   async function sonderDirect() {
     let d;
     try { d = await api("/api/direct"); } catch (_) { return; }
-    if (!d.mode || !etat || !etat.enregistrement) { $("#direct").hidden = true; return; }
-    $("#direct").hidden = false;
-    $("#direct-info").textContent = d.mode === "fin" ? "Mac occupé : la transcription se fera à la fin"
-      : d.retard > 15 ? `${d.retard} s de retard` : "";
-    if (d.texte === direct.texte) return;
-    direct.texte = d.texte;
+    if (!etat || !etat.enregistrement) return;
+    $("#direct-info").textContent = !d.mode ? "Transcription en direct désactivée : le texte arrivera à la fin"
+      : d.mode === "fin" ? "Mac occupé : la transcription se fera à la fin"
+      : d.retard > 15 ? `Transcription en direct · ${d.retard} s de retard` : "Transcription en direct";
+    const p = d.provisoire;
+    const cle = (d.texte || "") + "|" + (p ? p.qui + p.texte : "");
+    if (cle === direct.cle) return;
+    direct.cle = cle; direct.texte = d.texte || "";
     const zone = $("#direct-texte");
     const enBas = zone.scrollHeight - zone.scrollTop - zone.clientHeight < 40;   // on ne fait défiler que si l'utilisateur lit la fin
-    zone.innerHTML = d.texte ? d.texte.split("\n").map((ligne) => {
+    const lignes = direct.texte ? direct.texte.split("\n").map((ligne) => {
       const m = ligne.match(/^\[(\d+:\d+)\] (?:(Moi|Interlocuteur) : )?(.*)$/);
-      if (!m) return `<div>${esc(ligne)}</div>`;
-      return `<div><span class="heure">${m[1]}</span>${m[2] ? `<span class="qui">${m[2]} :</span> ` : ""}${esc(m[3])}</div>`;
-    }).join("") : '<span class="attente">Le texte apparaît par morceaux de 10 à 30 secondes…</span>';
+      return m ? bulle(m[1], m[2] || "", m[3]) : bulle("", "", ligne);
+    }) : [];
+    if (p) lignes.push(bulle(p.heure, p.qui, p.texte, true));
+    zone.innerHTML = lignes.length ? lignes.join("") : '<span class="attente">Parle : le texte s\'affiche au fil de la conversation.</span>';
     if (enBas) zone.scrollTop = zone.scrollHeight;
   }
 
@@ -1639,7 +1778,7 @@
     changementEnCours = arret ? "Arrêt de l'enregistrement…" : "Démarrage…";
     $("#statut").textContent = $("#rec-texte").textContent = changementEnCours;
     try {
-      rendreEtat(await api("/api/enregistrement", {}));
+      rendreEtat(await api("/api/enregistrement", arret && seanceActive ? { notes: notesSeance() } : {}));
       if (!arret && etat.enregistrement && location.hash !== "#comptes-rendus") location.hash = "#comptes-rendus";   // montre la nouvelle conversation
       if (arret && !etat.enregistrement) message("Envoyé à l'analyse. Le compte rendu arrive dans quelques minutes.");
     } catch (err) { message((arret ? "Arrêt impossible : " : "Micro inaccessible : ") + err.message); }
@@ -2202,6 +2341,7 @@
   }
   function majNiveaux(n) {
     const maintenant = Date.now();
+    $("#dock-onde .barres").style.setProperty("--n", n.enregistrement ? Math.max(0, (n.micro - 0.2) / 0.6).toFixed(2) : 0);
     if (n.micro > niveauxEtat.pic || maintenant - niveauxEtat.depuis > 6000) { niveauxEtat.pic = n.micro; niveauxEtat.depuis = maintenant; }
     const ecoute = n.enregistrement || n.moniteur;
     let classe = "", texte = "";
