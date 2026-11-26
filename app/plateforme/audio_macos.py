@@ -44,7 +44,7 @@ def jouer_son_test():
 
 
 def niveau_capture(fichier):
-    """Niveau (0 à 1) du son du Mac : pic des ~0,1 dernières secondes du WAV en cours d'écriture
+    """Niveau (0 à 1) du son du Mac : volume des ~0,1 dernières secondes du WAV en cours d'écriture
     (16 bits mono). 0 si le fichier n'existe pas encore ou ne grandit pas."""
     import struct
     try:
@@ -64,6 +64,9 @@ def niveau_capture(fichier):
         if n == 0:
             return 0.0
         valeurs = struct.unpack("<%dh" % n, donnees[:n * 2])
-        return round(max(abs(v) for v in valeurs) / 32768.0, 3)
+        # Même échelle que la jauge du micro : volume moyen en dB, de -60 dBFS (0) à 0 dBFS (1)
+        import math
+        rms = math.sqrt(sum(v * v for v in valeurs) / n) / 32768.0
+        return round(min(1.0, max(0.0, (20 * math.log10(rms + 1e-9) + 60) / 60)), 3)
     except Exception:
         return 0.0

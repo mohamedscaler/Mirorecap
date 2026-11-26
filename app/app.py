@@ -33,6 +33,7 @@ import unicodedata
 import urllib.parse
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 import sounddevice as sd
@@ -185,6 +186,33 @@ def lister_projets():
     return projets
 
 
+def fichier_notes(audio):
+    """Notes tapées pendant l'appel, gardées à côté de l'audio jusqu'au compte rendu
+    (rien n'est perdu si l'app redémarre ou si l'analyse échoue)."""
+    audio = Path(audio)
+    return audio.with_name(audio.stem + ".notes.json")
+
+
+def lire_notes(audio):
+    try:
+        notes = json.loads(fichier_notes(audio).read_text(encoding="utf-8"))
+        return notes if isinstance(notes, dict) else None
+    except Exception:
+        return None
+
+
+def ecrire_notes(audio, notes):
+    if notes and (notes.get("titre", "").strip() or notes.get("notes", "").strip()):
+        fichier_notes(audio).write_text(json.dumps(notes, ensure_ascii=False), encoding="utf-8")
+
+
+def deplacer_audio(source, destination):
+    """Déplace un audio et ses notes éventuelles."""
+    shutil.move(str(source), str(destination))
+    if fichier_notes(source).exists():
+        shutil.move(str(fichier_notes(source)), str(fichier_notes(destination)))
+
+
 def compter_erreurs():
     return sum(1 for f in DOSSIER_ERREURS.iterdir() if f.suffix.lower() in EXTENSIONS_AUDIO)
 
@@ -193,7 +221,7 @@ def relancer_erreurs():
     n = 0
     for f in DOSSIER_ERREURS.iterdir():
         if f.suffix.lower() in EXTENSIONS_AUDIO:
-            shutil.move(str(f), str(chemin_libre(DOSSIER_IMPORT / f.name)))
+            deplacer_audio(f, chemin_libre(DOSSIER_IMPORT / f.name))
             n += 1
         elif f.suffix == ".txt":
             f.unlink()  # transcription partielle : elle sera refaite
@@ -356,7 +384,8 @@ class Enregistreur:
             if direct:
                 direct.ajouter_micro(indata.copy())
             pic = float(np.abs(indata).max()) / 32768.0
-            self.niveau_micro = max(pic, self.niveau_micro * 0.85)   # retombe doucement, pour une jauge lisible
+            niveau = niveau_affiche(indata.astype("float32") / 32768.0)
+            self.niveau_micro = max(niveau, self.niveau_micro * 0.85)   # retombe doucement, pour une jauge lisible
             if pic >= 0.98:
                 self.dernier_pic_sature = time_monotonic()
 
@@ -469,7 +498,7 @@ class Moniteur:
 
         def callback(indata, frames, temps, statut):
             pic = float(np.abs(indata).max())
-            self.niveau = max(pic, self.niveau * 0.85)
+            self.niveau = max(niveau_affiche(indata), self.niveau * 0.85)
             if pic >= 0.98:
                 self.dernier_pic_sature = time_monotonic()
 
@@ -788,7 +817,11 @@ def consigne_whisper():
             vus.add(m.lower())
             uniques.append(m)
     texte = ", ".join(uniques)[:600]   # Whisper n'en lit qu'environ 220 jetons
-    return f"Appel professionnel en français. Vocabulaire : {texte}." if texte else None
+    if not texte:
+        return None
+    # Phrase en français seulement pour un appel en français : sinon elle pousserait Whisper à traduire
+    return f"Appel professionnel en français. Vocabulaire : {texte}." if CONFIG.get("langue", "fr") == "fr" else f"{texte}."
+
 
 
 def nettoyer_segments(segments):
@@ -880,7 +913,8 @@ def segments_whisper(son, modele=None, debut=0.0, part=1.0, precis=False, suivi=
     (Whisper en invente sur une piste presque vide, et y date mal les phrases)."""
     dossier = dossier or str(assurer_modele(modele))
     with VERROU_WHISPER:
-        segments = plateforme.whisper.transcrire(son, dossier, CONFIG["langue"], consigne_whisper(),
+        langue = CONFIG.get("langue") or "fr"
+        segments = plateforme.whisper.transcrire(son, dossier, None if langue == "auto" else langue, consigne_whisper(),
                                                  suivi or suivi_partiel(debut, part), mots=precis)
     gardes = []
     for seg in nettoyer_segments(segments):
@@ -897,6 +931,25 @@ def segments_whisper(son, modele=None, debut=0.0, part=1.0, precis=False, suivi=
     return gardes
 
 
+def segments_par_passages(son, modele=None, debut=0.0, part=1.0, precis=False):
+    """Comme segments_whisper, mais seuls les passages parlés vont à Whisper (silences sautés).
+    Si le détecteur ne trouve rien (voix très faible), on transcrit tout, comme avant."""
+    passages = passages_parole(son)
+    if not passages:
+        return segments_whisper(son, modele, debut, part, precis)
+    total = sum(len(m) for _, m in passages) or 1
+    fait, resultat = 0, []
+    for position, morceau in passages:
+        for seg in segments_whisper(morceau, modele, debut + part * fait / total, part * len(morceau) / total, precis):
+            seg["start"] += position
+            seg["end"] += position
+            resultat.append(seg)
+        fait += len(morceau)
+    if not resultat and not silencieux(son):
+        return segments_whisper(son, modele, debut, part, precis)   # rien trouvé dans les passages : on vérifie tout
+    return resultat
+
+
 def horodatage(secondes):
     m, s = divmod(int(secondes), 60)
     return f"[{m:02d}:{s:02d}]"
@@ -911,7 +964,7 @@ def transcrire(chemin_audio, modele=None):
     # phrases et Claude en ferait un faux compte rendu. On s'arrête avec un message clair.
     if silencieux(son):
         raise RuntimeError(ERREUR_SILENCE)
-    return "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}" for seg in segments_whisper(son, modele))
+    return "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}" for seg in segments_par_passages(son, modele))
 
 
 # --- Deux pistes : « Moi » (micro) et « Interlocuteur » (son de l'ordinateur) ------------------
@@ -977,10 +1030,10 @@ def transcrire_deux_pistes(micro, systeme, modele=None):
         if silencieux(son_micro):
             raise RuntimeError(ERREUR_SILENCE)
         return "\n".join(f"{horodatage(seg['start'])} {seg['text'].strip()}"
-                         for seg in segments_whisper(son_micro, modele))
+                         for seg in segments_par_passages(son_micro, modele))
     TRAITEMENT["duree_audio"] = int(max(len(son_micro), len(son_systeme)) / 16000)
-    segs_micro = [] if silencieux(son_micro) else segments_whisper(son_micro, modele, 0.0, 0.5, precis=True)
-    segs_systeme = segments_whisper(son_systeme, modele, 0.5, 0.5, precis=True)
+    segs_micro = [] if silencieux(son_micro) else segments_par_passages(son_micro, modele, 0.0, 0.5, precis=True)
+    segs_systeme = segments_par_passages(son_systeme, modele, 0.5, 0.5, precis=True)
     return fusionner_locuteurs(segs_micro, segs_systeme)
 
 
@@ -1000,48 +1053,131 @@ def vers_16k(son, frequence):
     return resample_poly(son, FREQ // g, int(frequence) // g).astype("float32")
 
 
-class DecoupeurSilences:
-    """Accumule l'audio 16 kHz d'une piste et le coupe en morceaux de 10 à 30 s, sur un silence
-    (niveau RMS par tranches de 0,1 s). Sans silence en 30 s, coupe au moment le plus calme."""
-    TRAME, MIN_S, MAX_S = 1600, 10, 30
+class DecoupeurParole:
+    """Détecteur de parole (même logique que le VAD de Meetily) : l'audio 16 kHz est lu par trames
+    de 30 ms ; une trame est de la parole quand elle dépasse nettement le bruit de fond (mesuré en
+    continu : 10e centile des 10 dernières secondes). Seuls les passages parlés sont rendus, avec
+    300 ms avant/après ; un passage se termine après `pause` s sans parole. Les silences ne vont
+    jamais à Whisper : c'est plus rapide et il n'invente plus de phrases dessus."""
+    TRAME = 480          # 30 ms
+    MARGE = 10           # 300 ms gardés avant et après la parole
+    PAROLE_MIN = 5       # 150 ms : en dessous, c'est un clic ou un bruit (« oui » reste au-dessus)
+    PLANCHER_MAX = -30   # dBFS : au-delà, on ne considère plus que c'est du bruit de fond
+    ABSOLU_MIN = -65     # dBFS : en dessous, jamais de la parole (une voix lointaine reste au-dessus)
 
-    def __init__(self):
+    def __init__(self, pause=0.6, max_s=20):
+        self.pause = int(pause * 1000 / 30)
+        self.max_trames = int(max_s * 1000 / 30)
         self.tampon = np.zeros(0, dtype="float32")
-        self.position = 0.0   # en secondes : début du tampon dans l'enregistrement
+        self.position = 0.0      # en secondes : début du tampon dans l'enregistrement
+        self.duree = 0.0         # secondes reçues au total
+        self.analyse = 0         # trames du tampon déjà analysées
+        self.db = []             # niveau (dBFS) de chaque trame analysée du tampon
+        self.historique = deque(maxlen=333)   # 10 s de niveaux, pour le bruit de fond
+        self.debut = self.fin = None          # passage parlé en cours (indices de trames du tampon)
+        self.n_parole = 0
+        self.emis = 0            # fin du dernier passage rendu (trames du tampon)
+
+    def _est_parole(self, db):
+        self.historique.append(db)
+        plancher = min(float(np.percentile(self.historique, 10)), self.PLANCHER_MAX)
+        ecart = 6 if self.debut is not None else 10   # hystérésis : plus facile de continuer que de commencer
+        return db > max(plancher + ecart, self.ABSOLU_MIN)
+
+    def _clore(self, fin, passages, suite=False):
+        a = max(self.debut - self.MARGE, self.emis, 0)
+        b = fin if suite else min(fin + self.MARGE, self.analyse)
+        if (suite or self.n_parole >= self.PAROLE_MIN) and b > a:
+            passages.append((a, b))
+            self.emis = b
+        if suite:
+            self.debut, self.n_parole = fin, 0   # la suite ne compte que si on y parle vraiment
+        else:
+            self.debut = self.fin = None
+            self.n_parole = 0
 
     def ajouter(self, son):
-        self.tampon = np.concatenate([self.tampon, son])
-        morceaux = []
-        while len(self.tampon) >= self.MIN_S * FREQ:
-            coupe = self._coupe()
-            if coupe is None:
-                break
-            morceaux.append((self.position, self.tampon[:coupe]))
-            self.tampon = self.tampon[coupe:]
-            self.position += coupe / FREQ
+        self.tampon = np.concatenate([self.tampon, np.asarray(son, dtype="float32")])
+        self.duree += len(son) / FREQ
+        n = len(self.tampon) // self.TRAME
+        passages = []
+        if n > self.analyse:
+            trames = self.tampon[self.analyse * self.TRAME:n * self.TRAME].reshape(-1, self.TRAME)
+            for db in 20 * np.log10(np.sqrt(np.mean(trames ** 2, axis=1)) + 1e-9):
+                i = self.analyse
+                self.analyse += 1
+                self.db.append(float(db))
+                parole = self._est_parole(db)
+                if parole:
+                    if self.debut is None:
+                        self.debut, self.n_parole = i, 0
+                    self.fin = i
+                    self.n_parole += 1
+                if self.debut is None:
+                    continue
+                if not parole and i - self.fin > self.pause:
+                    self._clore(self.fin + 1, passages)
+                elif i + 1 - self.debut >= self.max_trames:
+                    # Parole continue trop longue : coupe au moment le plus calme des 5 dernières secondes
+                    zone = max(self.debut + 1, i + 1 - 166)
+                    self._clore(zone + int(np.argmin(self.db[zone:i + 1])), passages, suite=True)
+        morceaux = [(self.position + a * self.TRAME / FREQ, self.tampon[a * self.TRAME:b * self.TRAME].copy())
+                    for a, b in passages]
+        self._elaguer()
         return morceaux
 
+    def _elaguer(self):
+        """Oublie l'audio qui ne servira plus (silence déjà analysé), en gardant la marge avant parole."""
+        garde = (self.debut if self.debut is not None else self.analyse) - self.MARGE
+        k = max(0, min(garde, self.analyse))
+        if not k:
+            return
+        self.tampon = self.tampon[k * self.TRAME:]
+        self.position += k * self.TRAME / FREQ
+        self.analyse -= k
+        self.db = self.db[k:]
+        self.emis = max(0, self.emis - k)
+        if self.debut is not None:
+            self.debut -= k
+            self.fin -= k
+
+    def en_cours(self):
+        """Passage parlé pas encore terminé (pour le texte provisoire) : (début en s, audio), ou None."""
+        if self.debut is None or self.n_parole < self.PAROLE_MIN:
+            return None
+        a = max(self.debut - self.MARGE, self.emis, 0)
+        return self.position + a * self.TRAME / FREQ, self.tampon[a * self.TRAME:self.analyse * self.TRAME]
+
     def vider(self):
-        """Ce qui reste à l'arrêt de l'enregistrement."""
-        reste = (self.position, self.tampon) if len(self.tampon) else None
+        """À l'arrêt de l'enregistrement : le passage parlé en cours, s'il y en a un."""
+        reste = None
+        if self.debut is not None and self.n_parole >= self.PAROLE_MIN:
+            a = max(self.debut - self.MARGE, self.emis, 0)
+            reste = (self.position + a * self.TRAME / FREQ, self.tampon[a * self.TRAME:].copy())
         self.position += len(self.tampon) / FREQ
         self.tampon = np.zeros(0, dtype="float32")
+        self.analyse, self.db, self.emis = 0, [], 0
+        self.debut = self.fin = None
         return reste
 
-    def _coupe(self):
-        n = len(self.tampon) // self.TRAME
-        rms = np.sqrt(np.mean(self.tampon[:n * self.TRAME].reshape(n, self.TRAME) ** 2, axis=1))
-        lisse = np.convolve(rms, np.ones(3) / 3, mode="same")   # un silence dure au moins ~0,3 s
-        seuil = max(0.004, 0.1 * float(np.percentile(rms, 95)))
-        debut, fin = self.MIN_S * 10, min(n, self.MAX_S * 10)
-        if fin > debut:
-            calmes = np.flatnonzero(lisse[debut:fin] < seuil)
-            if len(calmes):   # premier silence après 10 s : le texte arrive au plus tôt
-                return (debut + int(calmes[0])) * self.TRAME + self.TRAME // 2
-        if n >= self.MAX_S * 10:   # 30 s sans silence : au moment le plus calme des 10 dernières secondes
-            i = (self.MAX_S - 10) * 10 + int(np.argmin(lisse[(self.MAX_S - 10) * 10:self.MAX_S * 10]))
-            return i * self.TRAME + self.TRAME // 2
-        return None
+
+def passages_parole(son, pause=2.0, max_s=29):
+    """Passages parlés d'un fichier entier (pause de 2 s comme le traitement par lot de Meetily :
+    on garde des phrases entières pour Whisper). Liste de (début en s, audio)."""
+    decoupeur = DecoupeurParole(pause, max_s)
+    passages = decoupeur.ajouter(son)
+    reste = decoupeur.vider()
+    return passages + ([reste] if reste else [])
+
+
+def niveau_affiche(bloc):
+    """Niveau pour la jauge (0 à 1) : volume moyen (RMS) en dB, de -60 dBFS (0) à 0 dBFS (1).
+    Plus fidèle qu'un pic : un clic ou un souffle ne fait plus croire qu'on parle."""
+    bloc = np.asarray(bloc, dtype="float32")
+    if not bloc.size:
+        return 0.0
+    db = 20 * np.log10(float(np.sqrt(np.mean(bloc ** 2))) + 1e-9)
+    return min(1.0, max(0.0, (db + 60) / 60))
 
 
 class LecteurWavEnCours:
@@ -1085,13 +1221,16 @@ class TranscripteurDirect:
         self._version = 0
         self.blocs_micro = queue.Queue()          # blocs bruts du micro (callback audio)
         self.lecteur_systeme = None
-        self.decoupeurs = {MOI: DecoupeurSilences(), INTERLOCUTEUR: DecoupeurSilences()}
+        self.decoupeurs = {MOI: DecoupeurParole(), INTERLOCUTEUR: DecoupeurParole()}
         self.segments = {MOI: [], INTERLOCUTEUR: []}
         self.entendu = {MOI: False, INTERLOCUTEUR: False}
         self.morceaux = queue.Queue()             # (qui, début en s, audio 16 kHz, heure d'arrivée)
         self.mode = "direct"                      # ou "fin"
         self.en_cours = None                      # heure d'arrivée du morceau en cours de transcription
         self.au_fil = None                        # à l'arrêt : avancement (fait, total) pour la barre
+        self.provisoire = None                    # phrase en cours, affichée mot à mot : {qui, debut, texte}
+        self._dernier_provisoire = (None, 0)      # (début, longueur) du dernier passage transcrit en provisoire
+        self._duree_provisoire = 0.0              # temps pris par le dernier texte provisoire
         self.verrou = threading.Lock()
         self.arret = threading.Event()
         self.preparateur = threading.Thread(target=self._preparer, daemon=True)
@@ -1137,7 +1276,7 @@ class TranscripteurDirect:
     def _preparer(self):
         try:
             while True:
-                fin = self.arret.wait(1.0)
+                fin = self.arret.wait(0.3)   # le texte arrive moins d'une seconde après la fin d'une phrase
                 if self.mode != "direct":
                     while not self.blocs_micro.empty():   # mode « à la fin » : on jette, sans calcul
                         self.blocs_micro.get_nowait()
@@ -1148,6 +1287,8 @@ class TranscripteurDirect:
                                  (INTERLOCUTEUR, self.lecteur_systeme.lire() if self.lecteur_systeme else None)):
                     if son is not None and len(son):
                         self._deposer(qui, self.decoupeurs[qui].ajouter(son))
+                if not fin:
+                    self._transcrire_provisoire()
                 if fin:
                     for qui, decoupeur in self.decoupeurs.items():
                         reste = decoupeur.vider()
@@ -1158,6 +1299,36 @@ class TranscripteurDirect:
             self._basculer_a_la_fin(f"découpe : {e}")
         finally:
             self.morceaux.put(None)   # fin de la file, toujours : le thread de transcription ne reste jamais bloqué
+
+    def _transcrire_provisoire(self):
+        """Transcrit la phrase en train d'être dite, pour l'afficher mot à mot. Seulement quand Whisper
+        n'a rien d'autre à faire : le texte définitif passe toujours en premier."""
+        if self.mode != "direct" or self.en_cours or not self.morceaux.empty():
+            return
+        candidats = []
+        for qui, d in self.decoupeurs.items():
+            ouvert = d.en_cours()
+            if ouvert and len(ouvert[1]) >= FREQ // 2:
+                candidats.append((d.position + d.fin * d.TRAME / FREQ, qui, ouvert))
+        if not candidats:
+            return
+        _, qui, (debut, son) = max(candidats, key=lambda c: c[0])   # celui qui parle en ce moment
+        precedent_debut, precedente_longueur = self._dernier_provisoire
+        # Pas assez de nouveau son depuis la dernière fois (au moins 0,8 s, et plus si Whisper est lent)
+        if precedent_debut == debut and len(son) - precedente_longueur < FREQ * max(0.8, 1.5 * self._duree_provisoire):
+            return
+        self._dernier_provisoire = (debut, len(son))
+        depart = time.time()
+        try:
+            segs = segments_whisper(son, suivi=_SuiviMuet, dossier=self.dossier_modele)
+        except Exception as e:
+            print(f"Texte provisoire : {e}", flush=True)
+            return
+        texte = re.sub(r"\s*(\.\.\.|…)$", "", " ".join(seg["text"].strip() for seg in segs).strip())   # l'écran a ses propres « … »
+        self._duree_provisoire = time.time() - depart
+        if texte:
+            with self.verrou:
+                self.provisoire = {"qui": qui, "debut": debut, "texte": texte}
 
     def _transcrire(self):
         fait = 0
@@ -1173,9 +1344,8 @@ class TranscripteurDirect:
                 continue
             self.en_cours = arrivee
             try:
-                # Horodatage mot par mot seulement quand il y a deux voix à ordonner (comme le traitement classique)
-                precis = qui == INTERLOCUTEUR or self.entendu[INTERLOCUTEUR]
-                segs = segments_whisper(son, precis=precis, suivi=_SuiviMuet, dossier=self.dossier_modele)
+                # Morceaux déjà limités à la parole : pas besoin de l'horodatage mot par mot (plus lent)
+                segs = segments_whisper(son, suivi=_SuiviMuet, dossier=self.dossier_modele)
             except Exception as e:
                 self._basculer_a_la_fin(f"Whisper : {e}")
                 continue
@@ -1188,6 +1358,9 @@ class TranscripteurDirect:
                 self.segments[qui].extend(segs)
                 self.segments[qui].sort(key=lambda x: x["start"])
                 self._version += 1
+                p = self.provisoire
+                if p and p["qui"] == qui and p["debut"] < debut + len(son) / FREQ:
+                    self.provisoire = None   # le texte définitif de cette phrase est arrivé
             fait += 1
             if self.au_fil:
                 self.au_fil(fait)
@@ -1216,7 +1389,11 @@ class TranscripteurDirect:
         return texte
 
     def etat(self):
-        return {"mode": self.mode, "texte": self.texte(), "retard": self.retard() if self.mode == "direct" else 0}
+        p = self.provisoire if self.mode == "direct" else None
+        provisoire = {"qui": p["qui"] if self.entendu[INTERLOCUTEUR] else "", "heure": horodatage(p["debut"]),
+                      "texte": p["texte"]} if p else None
+        return {"mode": self.mode, "texte": self.texte(), "provisoire": provisoire,
+                "retard": self.retard() if self.mode == "direct" else 0}
 
     def terminer(self):
         """À l'arrêt (pistes finalisées) : transcrit ce qui reste. Retourne la transcription,
@@ -1227,14 +1404,14 @@ class TranscripteurDirect:
         TRAITEMENT["progression"] = 0.0 if total else None
         self.au_fil = lambda fait: TRAITEMENT.update(progression=min(1.0, fait / max(total, 1)))
         self.transcripteur.join(timeout=900)
-        TRAITEMENT["duree_audio"] = int(max(d.position for d in self.decoupeurs.values()))
+        TRAITEMENT["duree_audio"] = int(max(d.duree for d in self.decoupeurs.values()))
         if self.preparateur.is_alive() or self.transcripteur.is_alive():
             self._basculer_a_la_fin("fin de transcription trop longue")
         if self.mode != "direct":
             return None
         if not self.entendu[MOI] and not self.entendu[INTERLOCUTEUR]:
-            raise RuntimeError(ERREUR_SILENCE)
-        return self.texte()
+            return None   # aucune parole repérée (micro très faible ?) : le traitement complet vérifiera
+        return self.texte() or None   # que des bruits sans texte : le traitement complet vérifiera
 
 
 def dossier_modele_direct():
@@ -1565,8 +1742,12 @@ def extraire_json(texte, source):
     return json.loads(texte[debut:fin + 1])
 
 
-def analyser(transcription, date):
-    """Rédige le compte rendu (et le mail éventuel) et choisit le projet."""
+LANGUES = ("fr", "en", "es", "de", "it", "auto")
+
+
+def analyser(transcription, date, notes=None):
+    """Rédige le compte rendu (et le mail éventuel) et choisit le projet.
+    notes : {titre, notes} tapés par l'utilisateur pendant l'appel."""
     moteurs = moteurs_a_essayer()
     if not moteurs:
         raise RuntimeError("aucun moteur d'analyse prêt : connecte Claude ou ChatGPT, ou ajoute une clé API (Réglages)")
@@ -1575,6 +1756,12 @@ def analyser(transcription, date):
     noms = list(projets.keys()) + [PROJET_PAR_DEFAUT]
     systeme = instructions_analyse(noms, projets)
     contenu = f"Date de l'enregistrement : {date:%d/%m/%Y %H:%M}\n\nTranscription :\n{transcription}"
+    notes = {k: str(v or "") for k, v in (notes or {}).items()}
+    if notes.get("titre", "").strip():
+        contenu += f"\n\nTitre donné par l'utilisateur (à reprendre comme titre) : {notes['titre'].strip()[:200]}"
+    if notes.get("notes", "").strip():
+        contenu += ("\n\nNotes prises par l'utilisateur pendant l'appel (prioritaires : intègre-les au compte rendu, "
+                    f"elles priment sur la transcription en cas de doute) :\n{notes['notes'].strip()[:8000]}")
 
     fonctions = {"abonnement": analyser_abonnement, "chatgpt": analyser_chatgpt,
                  "api": analyser_api, "openai": analyser_openai}
@@ -2003,7 +2190,7 @@ def section_mail(analyse):
     return f"## Mail à envoyer\n\n{entete + chr(10) if entete else ''}{corps}\n\n"
 
 
-def ranger(chemin_audio, date, transcription, analyse):
+def ranger(chemin_audio, date, transcription, analyse, notes=None):
     dossier = DOSSIER_SORTIE / analyse["projet"]
     (dossier / "audio").mkdir(parents=True, exist_ok=True)
 
@@ -2013,11 +2200,20 @@ def ranger(chemin_audio, date, transcription, analyse):
 
     md = chemin_libre(dossier / f"{base}.md")
     ligne_audio = f"[audio/{audio_final.name}](audio/{audio_final.name})"
-    md.write_text(contenu_compte_rendu(date, transcription, analyse, ligne_audio), encoding="utf-8")
+    md.write_text(contenu_compte_rendu(date, transcription, analyse, ligne_audio,
+                                       notes=texte_notes(notes)), encoding="utf-8")
+    fichier_notes(chemin_audio).unlink(missing_ok=True)   # elles sont maintenant dans le compte rendu
     return md
 
 
-def contenu_compte_rendu(date, transcription, analyse, ligne_audio, note=""):
+def texte_notes(notes):
+    """Notes de l'appel telles qu'écrites dans le compte rendu (section « Mes notes »)."""
+    notes = notes or {}
+    titre, corps = str(notes.get("titre") or "").strip(), str(notes.get("notes") or "").strip()
+    return "\n\n".join(x for x in ((f"Titre choisi : {titre}" if titre else ""), corps) if x)
+
+
+def contenu_compte_rendu(date, transcription, analyse, ligne_audio, note="", notes=""):
     return (
         f"# {analyse['titre']}\n\n"
         f"- **Date** : {date:%d/%m/%Y à %H:%M}\n"
@@ -2027,6 +2223,7 @@ def contenu_compte_rendu(date, transcription, analyse, ligne_audio, note=""):
         + f"\n{analyse['compte_rendu'].strip()}\n\n"
         + section_mail(analyse)
         + (f"## Contexte pour Claude\n\n```xml\n{analyse['contexte_claude'].strip()}\n```\n\n" if analyse.get("contexte_claude") else "")
+        + (f"## Mes notes\n\n{notes.strip()}\n\n" if notes.strip() else "")
         + f"---\n\n## Transcription complète\n\n{transcription}\n"
     )
 
@@ -2091,12 +2288,19 @@ def lire_parties_compte_rendu(md):
     return date, (audio.group(1).strip() if audio else "non conservé"), transcription
 
 
+def lire_notes_compte_rendu(md):
+    """Section « Mes notes » d'un compte rendu (notes tapées pendant l'appel), ou ""."""
+    m = re.search(r"\n## Mes notes\s*\n(.*?)\n(?=---\n|## )", md.read_text(encoding="utf-8"), flags=re.S)
+    return m.group(1).strip() if m else ""
+
+
 def ameliorer_compte_rendu(projet, fichier, mode):
     """mode « corriger » : correction IA de la transcription existante.
     mode « pro » : nouvelle transcription avec le modèle Pro puis correction IA.
     Le compte rendu est ensuite réécrit à partir de la transcription améliorée."""
     md = chemin_compte_rendu(projet, fichier)
     date, ligne_audio, transcription = lire_parties_compte_rendu(md)
+    mes_notes = lire_notes_compte_rendu(md)
     etapes = []
     if mode == "pro":
         audio = audio_du_compte_rendu(md)
@@ -2111,11 +2315,11 @@ def ameliorer_compte_rendu(projet, fichier, mode):
     transcription = corriger_transcription(transcription, projet)
     etapes.append("corrigée par l'IA")
     TRAITEMENT.update(etape="analyse", progression=None)
-    analyse = analyser(transcription, date)
+    analyse = analyser(transcription, date, {"notes": mes_notes})
     if projet != PROJET_PAR_DEFAUT:
         analyse["projet"] = projet   # on garde le classement choisi
     note = f"{' puis '.join(etapes)} le {dt.datetime.now():%d/%m/%Y}"
-    contenu = contenu_compte_rendu(date, transcription, analyse, ligne_audio, note)
+    contenu = contenu_compte_rendu(date, transcription, analyse, ligne_audio, note, mes_notes)
     if analyse["projet"] == projet:
         md.write_text(contenu, encoding="utf-8")
         return {"projet": projet, "fichier": md.name, "titre": analyse["titre"]}
@@ -2123,7 +2327,7 @@ def ameliorer_compte_rendu(projet, fichier, mode):
     deplace = deplacer_compte_rendu(projet, fichier, analyse["projet"])
     cible = dossier_projet(deplace["projet"]) / deplace["fichier"]
     _, ligne_audio, _ = lire_parties_compte_rendu(cible)
-    cible.write_text(contenu_compte_rendu(date, transcription, analyse, ligne_audio, note), encoding="utf-8")
+    cible.write_text(contenu_compte_rendu(date, transcription, analyse, ligne_audio, note, mes_notes), encoding="utf-8")
     return {"projet": deplace["projet"], "fichier": cible.name, "titre": analyse["titre"]}
 
 
@@ -2636,6 +2840,7 @@ def lire_reglages():
         "connexion": CONNEXION,
         "son_systeme": CONFIG.get("son_systeme", True),
         "transcription_direct": CONFIG.get("transcription_direct", True),
+        "langue": CONFIG.get("langue") or "fr",
         **micros,
         "maj_auto": CONFIG.get("maj_auto", True),
         "quitter_a_la_fermeture": bool(CONFIG.get("quitter_a_la_fermeture", True)),
@@ -2693,6 +2898,8 @@ def sauver_reglages(donnees):
         CONFIG["son_systeme"] = donnees["son_systeme"]
     if isinstance(donnees.get("transcription_direct"), bool):
         CONFIG["transcription_direct"] = donnees["transcription_direct"]
+    if donnees.get("langue") in LANGUES:
+        CONFIG["langue"] = donnees["langue"]   # pris en compte dès la phrase suivante, même pendant un appel
     if "dossier_sortie" in donnees and donnees["dossier_sortie"].strip() != CONFIG.get("dossier_sortie", ""):
         CONFIG["dossier_sortie"] = donnees["dossier_sortie"].strip()
         redemarrage = True  # les chemins sont calculés au démarrage
@@ -2771,8 +2978,13 @@ class Api(http.server.BaseHTTPRequestHandler):
         try:
             d = self._corps()
             if self.path == "/api/enregistrement":
+                if isinstance(d.get("notes"), dict):
+                    self.app.garder_notes(d["notes"])
                 self.app.basculer_enregistrement()
                 return self._json(200, self.app.etat())
+            if self.path == "/api/notes":   # notes tapées pendant l'appel, envoyées à l'IA avec la transcription
+                self.app.garder_notes(d)
+                return self._json(200, {"ok": True})
             if self.path == "/api/projets":
                 creer_projet(d.get("nom", ""), d.get("description", ""))
                 return self._json(200, liste_projets_detaillee())
@@ -2928,12 +3140,14 @@ class App:
         # on les remet en traitement au lieu de les laisser bloqués dans _En-cours
         for f in DOSSIER_ENREG.iterdir():
             if f.suffix.lower() in EXTENSIONS_AUDIO and f.stat().st_size > 1024:
-                shutil.move(str(f), str(chemin_libre(DOSSIER_IMPORT / f.name)))
+                deplacer_audio(f, chemin_libre(DOSSIER_IMPORT / f.name))
 
         # Pistes « son système » d'un enregistrement interrompu : inutilisables seules
         if DOSSIER_CAPTURE.exists():
             shutil.rmtree(DOSSIER_CAPTURE, ignore_errors=True)
         self.finalisations = {}          # piste micro → fin d'arrêt (capture du son système) à faire avant traitement
+        self.notes_en_cours = {}         # titre et notes tapés pendant l'enregistrement en cours
+        self.notes_appel = {}            # piste micro → notes de cet appel, pour l'analyse
 
         threading.Thread(target=self.travailleur, daemon=True).start()
         threading.Thread(target=self.boucle_maj, daemon=True).start()
@@ -2992,6 +3206,7 @@ class App:
         return {
             "enregistrement": self.enreg.actif,
             "duree": duree,
+            "notes": self.notes_en_cours if self.enreg.actif else None,
             "statut": self.statut,
             "en_attente": self.file_traitement.qsize(),
             "erreurs": compter_erreurs(),
@@ -3236,6 +3451,18 @@ class App:
         sys.stdout.flush()
         os._exit(0)   # le lanceur natif s'arrête avec nous
 
+    def garder_notes(self, notes):
+        if not self.enreg.actif:
+            return
+        nouvelles = {"titre": str(notes.get("titre") or ""), "notes": str(notes.get("notes") or "")}
+        if not any(v.strip() for v in nouvelles.values()) and any(v.strip() for v in self.notes_en_cours.values()):
+            return   # fenêtre rouverte avec des champs vides : on ne perd pas ce qui était tapé
+        self.notes_en_cours = nouvelles
+        try:
+            ecrire_notes(self.enreg.chemin, nouvelles)   # sur le disque tout de suite : survit à un plantage
+        except Exception as e:
+            print(f"Notes de l'appel : {e}", flush=True)
+
     def basculer_enregistrement(self):
         # Un arrêt peut durer quelques secondes : un second clic pendant ce temps est ignoré
         # (sinon il relançait aussitôt un nouvel enregistrement, et l'arrêt semblait sans effet)
@@ -3247,6 +3474,7 @@ class App:
             else:
                 chemin, debut, finaliser = self.enreg.arreter()
                 self.finalisations[chemin] = finaliser
+                self.notes_appel[chemin], self.notes_en_cours = self.notes_en_cours, {}
                 self.en_file.add(chemin)
                 self.file_traitement.put((chemin, debut))
         finally:
@@ -3419,6 +3647,7 @@ class App:
                               date=date.isoformat(timespec="minutes"))
             try:
                 finaliser = self.finalisations.pop(chemin, None)
+                notes = self.notes_appel.pop(chemin, None) or lire_notes(chemin)
                 if finaliser:
                     self.statut = "Finalisation…"
                 systeme = finaliser() if finaliser else None
@@ -3459,8 +3688,8 @@ class App:
                     raise ValueError("aucune parole détectée")
                 self.statut = "Analyse…"
                 TRAITEMENT.update(etape="analyse", progression=None)
-                analyse = analyser(transcription, date)
-                md = ranger(chemin, date, transcription, analyse)
+                analyse = analyser(transcription, date, notes)
+                md = ranger(chemin, date, transcription, analyse, notes)
                 self.dernier = {"projet": analyse["projet"], "fichier": md.name, "titre": analyse["titre"]}
                 nouveau = ajouter_proposition(analyse, md.name) if analyse["projet"] == PROJET_PAR_DEFAUT else None
                 if nouveau:
@@ -3483,7 +3712,7 @@ class App:
                 # Rien n'est perdu : l'audio (et la transcription si dispo) part dans _Erreurs
                 destination = chemin_libre(DOSSIER_ERREURS / chemin.name)
                 if chemin.exists():
-                    shutil.move(str(chemin), str(destination))
+                    deplacer_audio(chemin, destination)   # les notes suivent l'audio
                 if transcription:
                     destination.with_suffix(".txt").write_text(transcription, encoding="utf-8")
                 notifier("Erreur de traitement", f"{chemin.name} : {e}")
