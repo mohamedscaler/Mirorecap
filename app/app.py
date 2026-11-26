@@ -186,6 +186,33 @@ def lister_projets():
     return projets
 
 
+def fichier_notes(audio):
+    """Notes tapées pendant l'appel, gardées à côté de l'audio jusqu'au compte rendu
+    (rien n'est perdu si l'app redémarre ou si l'analyse échoue)."""
+    audio = Path(audio)
+    return audio.with_name(audio.stem + ".notes.json")
+
+
+def lire_notes(audio):
+    try:
+        notes = json.loads(fichier_notes(audio).read_text(encoding="utf-8"))
+        return notes if isinstance(notes, dict) else None
+    except Exception:
+        return None
+
+
+def ecrire_notes(audio, notes):
+    if notes and (notes.get("titre", "").strip() or notes.get("notes", "").strip()):
+        fichier_notes(audio).write_text(json.dumps(notes, ensure_ascii=False), encoding="utf-8")
+
+
+def deplacer_audio(source, destination):
+    """Déplace un audio et ses notes éventuelles."""
+    shutil.move(str(source), str(destination))
+    if fichier_notes(source).exists():
+        shutil.move(str(fichier_notes(source)), str(fichier_notes(destination)))
+
+
 def compter_erreurs():
     return sum(1 for f in DOSSIER_ERREURS.iterdir() if f.suffix.lower() in EXTENSIONS_AUDIO)
 
@@ -194,7 +221,7 @@ def relancer_erreurs():
     n = 0
     for f in DOSSIER_ERREURS.iterdir():
         if f.suffix.lower() in EXTENSIONS_AUDIO:
-            shutil.move(str(f), str(chemin_libre(DOSSIER_IMPORT / f.name)))
+            deplacer_audio(f, chemin_libre(DOSSIER_IMPORT / f.name))
             n += 1
         elif f.suffix == ".txt":
             f.unlink()  # transcription partielle : elle sera refaite
@@ -790,7 +817,11 @@ def consigne_whisper():
             vus.add(m.lower())
             uniques.append(m)
     texte = ", ".join(uniques)[:600]   # Whisper n'en lit qu'environ 220 jetons
-    return f"Appel professionnel en français. Vocabulaire : {texte}." if texte else None
+    if not texte:
+        return None
+    # Phrase en français seulement pour un appel en français : sinon elle pousserait Whisper à traduire
+    return f"Appel professionnel en français. Vocabulaire : {texte}." if CONFIG.get("langue", "fr") == "fr" else f"{texte}."
+
 
 
 def nettoyer_segments(segments):
@@ -914,6 +945,8 @@ def segments_par_passages(son, modele=None, debut=0.0, part=1.0, precis=False):
             seg["end"] += position
             resultat.append(seg)
         fait += len(morceau)
+    if not resultat and not silencieux(son):
+        return segments_whisper(son, modele, debut, part, precis)   # rien trouvé dans les passages : on vérifie tout
     return resultat
 
 
@@ -1028,9 +1061,9 @@ class DecoupeurParole:
     jamais à Whisper : c'est plus rapide et il n'invente plus de phrases dessus."""
     TRAME = 480          # 30 ms
     MARGE = 10           # 300 ms gardés avant et après la parole
-    PAROLE_MIN = 8       # 250 ms : en dessous, c'est un clic ou un bruit
+    PAROLE_MIN = 5       # 150 ms : en dessous, c'est un clic ou un bruit (« oui » reste au-dessus)
     PLANCHER_MAX = -30   # dBFS : au-delà, on ne considère plus que c'est du bruit de fond
-    ABSOLU_MIN = -55     # dBFS : en dessous, jamais de la parole
+    ABSOLU_MIN = -65     # dBFS : en dessous, jamais de la parole (une voix lointaine reste au-dessus)
 
     def __init__(self, pause=0.6, max_s=20):
         self.pause = int(pause * 1000 / 30)
@@ -1058,7 +1091,7 @@ class DecoupeurParole:
             passages.append((a, b))
             self.emis = b
         if suite:
-            self.debut, self.n_parole = fin, self.PAROLE_MIN
+            self.debut, self.n_parole = fin, 0   # la suite ne compte que si on y parle vraiment
         else:
             self.debut = self.fin = None
             self.n_parole = 0
@@ -1128,7 +1161,7 @@ class DecoupeurParole:
         return reste
 
 
-def passages_parole(son, pause=2.0, max_s=30):
+def passages_parole(son, pause=2.0, max_s=29):
     """Passages parlés d'un fichier entier (pause de 2 s comme le traitement par lot de Meetily :
     on garde des phrases entières pour Whisper). Liste de (début en s, audio)."""
     decoupeur = DecoupeurParole(pause, max_s)
@@ -1197,6 +1230,7 @@ class TranscripteurDirect:
         self.au_fil = None                        # à l'arrêt : avancement (fait, total) pour la barre
         self.provisoire = None                    # phrase en cours, affichée mot à mot : {qui, debut, texte}
         self._dernier_provisoire = (None, 0)      # (début, longueur) du dernier passage transcrit en provisoire
+        self._duree_provisoire = 0.0              # temps pris par le dernier texte provisoire
         self.verrou = threading.Lock()
         self.arret = threading.Event()
         self.preparateur = threading.Thread(target=self._preparer, daemon=True)
@@ -1280,17 +1314,21 @@ class TranscripteurDirect:
             return
         _, qui, (debut, son) = max(candidats, key=lambda c: c[0])   # celui qui parle en ce moment
         precedent_debut, precedente_longueur = self._dernier_provisoire
-        if precedent_debut == debut and len(son) - precedente_longueur < FREQ * 0.8:
-            return   # pas assez de nouveau son depuis la dernière fois
+        # Pas assez de nouveau son depuis la dernière fois (au moins 0,8 s, et plus si Whisper est lent)
+        if precedent_debut == debut and len(son) - precedente_longueur < FREQ * max(0.8, 1.5 * self._duree_provisoire):
+            return
         self._dernier_provisoire = (debut, len(son))
+        depart = time.time()
         try:
             segs = segments_whisper(son, suivi=_SuiviMuet, dossier=self.dossier_modele)
         except Exception as e:
             print(f"Texte provisoire : {e}", flush=True)
             return
         texte = re.sub(r"\s*(\.\.\.|…)$", "", " ".join(seg["text"].strip() for seg in segs).strip())   # l'écran a ses propres « … »
+        self._duree_provisoire = time.time() - depart
         if texte:
-            self.provisoire = {"qui": qui, "debut": debut, "texte": texte}
+            with self.verrou:
+                self.provisoire = {"qui": qui, "debut": debut, "texte": texte}
 
     def _transcrire(self):
         fait = 0
@@ -1373,7 +1411,7 @@ class TranscripteurDirect:
             return None
         if not self.entendu[MOI] and not self.entendu[INTERLOCUTEUR]:
             return None   # aucune parole repérée (micro très faible ?) : le traitement complet vérifiera
-        return self.texte()
+        return self.texte() or None   # que des bruits sans texte : le traitement complet vérifiera
 
 
 def dossier_modele_direct():
@@ -1718,7 +1756,7 @@ def analyser(transcription, date, notes=None):
     noms = list(projets.keys()) + [PROJET_PAR_DEFAUT]
     systeme = instructions_analyse(noms, projets)
     contenu = f"Date de l'enregistrement : {date:%d/%m/%Y %H:%M}\n\nTranscription :\n{transcription}"
-    notes = notes or {}
+    notes = {k: str(v or "") for k, v in (notes or {}).items()}
     if notes.get("titre", "").strip():
         contenu += f"\n\nTitre donné par l'utilisateur (à reprendre comme titre) : {notes['titre'].strip()[:200]}"
     if notes.get("notes", "").strip():
@@ -2152,7 +2190,7 @@ def section_mail(analyse):
     return f"## Mail à envoyer\n\n{entete + chr(10) if entete else ''}{corps}\n\n"
 
 
-def ranger(chemin_audio, date, transcription, analyse):
+def ranger(chemin_audio, date, transcription, analyse, notes=None):
     dossier = DOSSIER_SORTIE / analyse["projet"]
     (dossier / "audio").mkdir(parents=True, exist_ok=True)
 
@@ -2162,11 +2200,20 @@ def ranger(chemin_audio, date, transcription, analyse):
 
     md = chemin_libre(dossier / f"{base}.md")
     ligne_audio = f"[audio/{audio_final.name}](audio/{audio_final.name})"
-    md.write_text(contenu_compte_rendu(date, transcription, analyse, ligne_audio), encoding="utf-8")
+    md.write_text(contenu_compte_rendu(date, transcription, analyse, ligne_audio,
+                                       notes=texte_notes(notes)), encoding="utf-8")
+    fichier_notes(chemin_audio).unlink(missing_ok=True)   # elles sont maintenant dans le compte rendu
     return md
 
 
-def contenu_compte_rendu(date, transcription, analyse, ligne_audio, note=""):
+def texte_notes(notes):
+    """Notes de l'appel telles qu'écrites dans le compte rendu (section « Mes notes »)."""
+    notes = notes or {}
+    titre, corps = str(notes.get("titre") or "").strip(), str(notes.get("notes") or "").strip()
+    return "\n\n".join(x for x in ((f"Titre choisi : {titre}" if titre else ""), corps) if x)
+
+
+def contenu_compte_rendu(date, transcription, analyse, ligne_audio, note="", notes=""):
     return (
         f"# {analyse['titre']}\n\n"
         f"- **Date** : {date:%d/%m/%Y à %H:%M}\n"
@@ -2176,6 +2223,7 @@ def contenu_compte_rendu(date, transcription, analyse, ligne_audio, note=""):
         + f"\n{analyse['compte_rendu'].strip()}\n\n"
         + section_mail(analyse)
         + (f"## Contexte pour Claude\n\n```xml\n{analyse['contexte_claude'].strip()}\n```\n\n" if analyse.get("contexte_claude") else "")
+        + (f"## Mes notes\n\n{notes.strip()}\n\n" if notes.strip() else "")
         + f"---\n\n## Transcription complète\n\n{transcription}\n"
     )
 
@@ -2240,12 +2288,19 @@ def lire_parties_compte_rendu(md):
     return date, (audio.group(1).strip() if audio else "non conservé"), transcription
 
 
+def lire_notes_compte_rendu(md):
+    """Section « Mes notes » d'un compte rendu (notes tapées pendant l'appel), ou ""."""
+    m = re.search(r"\n## Mes notes\s*\n(.*?)\n(?=---\n|## )", md.read_text(encoding="utf-8"), flags=re.S)
+    return m.group(1).strip() if m else ""
+
+
 def ameliorer_compte_rendu(projet, fichier, mode):
     """mode « corriger » : correction IA de la transcription existante.
     mode « pro » : nouvelle transcription avec le modèle Pro puis correction IA.
     Le compte rendu est ensuite réécrit à partir de la transcription améliorée."""
     md = chemin_compte_rendu(projet, fichier)
     date, ligne_audio, transcription = lire_parties_compte_rendu(md)
+    mes_notes = lire_notes_compte_rendu(md)
     etapes = []
     if mode == "pro":
         audio = audio_du_compte_rendu(md)
@@ -2260,11 +2315,11 @@ def ameliorer_compte_rendu(projet, fichier, mode):
     transcription = corriger_transcription(transcription, projet)
     etapes.append("corrigée par l'IA")
     TRAITEMENT.update(etape="analyse", progression=None)
-    analyse = analyser(transcription, date)
+    analyse = analyser(transcription, date, {"notes": mes_notes})
     if projet != PROJET_PAR_DEFAUT:
         analyse["projet"] = projet   # on garde le classement choisi
     note = f"{' puis '.join(etapes)} le {dt.datetime.now():%d/%m/%Y}"
-    contenu = contenu_compte_rendu(date, transcription, analyse, ligne_audio, note)
+    contenu = contenu_compte_rendu(date, transcription, analyse, ligne_audio, note, mes_notes)
     if analyse["projet"] == projet:
         md.write_text(contenu, encoding="utf-8")
         return {"projet": projet, "fichier": md.name, "titre": analyse["titre"]}
@@ -2272,7 +2327,7 @@ def ameliorer_compte_rendu(projet, fichier, mode):
     deplace = deplacer_compte_rendu(projet, fichier, analyse["projet"])
     cible = dossier_projet(deplace["projet"]) / deplace["fichier"]
     _, ligne_audio, _ = lire_parties_compte_rendu(cible)
-    cible.write_text(contenu_compte_rendu(date, transcription, analyse, ligne_audio, note), encoding="utf-8")
+    cible.write_text(contenu_compte_rendu(date, transcription, analyse, ligne_audio, note, mes_notes), encoding="utf-8")
     return {"projet": deplace["projet"], "fichier": cible.name, "titre": analyse["titre"]}
 
 
@@ -3085,7 +3140,7 @@ class App:
         # on les remet en traitement au lieu de les laisser bloqués dans _En-cours
         for f in DOSSIER_ENREG.iterdir():
             if f.suffix.lower() in EXTENSIONS_AUDIO and f.stat().st_size > 1024:
-                shutil.move(str(f), str(chemin_libre(DOSSIER_IMPORT / f.name)))
+                deplacer_audio(f, chemin_libre(DOSSIER_IMPORT / f.name))
 
         # Pistes « son système » d'un enregistrement interrompu : inutilisables seules
         if DOSSIER_CAPTURE.exists():
@@ -3151,6 +3206,7 @@ class App:
         return {
             "enregistrement": self.enreg.actif,
             "duree": duree,
+            "notes": self.notes_en_cours if self.enreg.actif else None,
             "statut": self.statut,
             "en_attente": self.file_traitement.qsize(),
             "erreurs": compter_erreurs(),
@@ -3396,8 +3452,16 @@ class App:
         os._exit(0)   # le lanceur natif s'arrête avec nous
 
     def garder_notes(self, notes):
-        if self.enreg.actif:
-            self.notes_en_cours = {"titre": str(notes.get("titre") or ""), "notes": str(notes.get("notes") or "")}
+        if not self.enreg.actif:
+            return
+        nouvelles = {"titre": str(notes.get("titre") or ""), "notes": str(notes.get("notes") or "")}
+        if not any(v.strip() for v in nouvelles.values()) and any(v.strip() for v in self.notes_en_cours.values()):
+            return   # fenêtre rouverte avec des champs vides : on ne perd pas ce qui était tapé
+        self.notes_en_cours = nouvelles
+        try:
+            ecrire_notes(self.enreg.chemin, nouvelles)   # sur le disque tout de suite : survit à un plantage
+        except Exception as e:
+            print(f"Notes de l'appel : {e}", flush=True)
 
     def basculer_enregistrement(self):
         # Un arrêt peut durer quelques secondes : un second clic pendant ce temps est ignoré
@@ -3583,7 +3647,7 @@ class App:
                               date=date.isoformat(timespec="minutes"))
             try:
                 finaliser = self.finalisations.pop(chemin, None)
-                notes = self.notes_appel.pop(chemin, None)
+                notes = self.notes_appel.pop(chemin, None) or lire_notes(chemin)
                 if finaliser:
                     self.statut = "Finalisation…"
                 systeme = finaliser() if finaliser else None
@@ -3625,7 +3689,7 @@ class App:
                 self.statut = "Analyse…"
                 TRAITEMENT.update(etape="analyse", progression=None)
                 analyse = analyser(transcription, date, notes)
-                md = ranger(chemin, date, transcription, analyse)
+                md = ranger(chemin, date, transcription, analyse, notes)
                 self.dernier = {"projet": analyse["projet"], "fichier": md.name, "titre": analyse["titre"]}
                 nouveau = ajouter_proposition(analyse, md.name) if analyse["projet"] == PROJET_PAR_DEFAUT else None
                 if nouveau:
@@ -3648,7 +3712,7 @@ class App:
                 # Rien n'est perdu : l'audio (et la transcription si dispo) part dans _Erreurs
                 destination = chemin_libre(DOSSIER_ERREURS / chemin.name)
                 if chemin.exists():
-                    shutil.move(str(chemin), str(destination))
+                    deplacer_audio(chemin, destination)   # les notes suivent l'audio
                 if transcription:
                     destination.with_suffix(".txt").write_text(transcription, encoding="utf-8")
                 notifier("Erreur de traitement", f"{chemin.name} : {e}")

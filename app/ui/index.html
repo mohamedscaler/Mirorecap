@@ -779,6 +779,11 @@
   .seance-notes::placeholder { color: var(--second); opacity: .75; }
   textarea.seance-notes, input.seance-titre { box-shadow: none; border-radius: 0; background: none; border: 0; outline: 0; }
 
+  .retour-seance { position: absolute; right: 24px; bottom: 18px; z-index: 20;
+    display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px; font-size: 12.5px; color: var(--texte);
+    background: var(--verre-fort); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%);
+    box-shadow: inset 0 0 0 1px var(--verre-bord), 0 8px 24px rgba(0,0,0,.16); }
+  .retour-seance .point-rouge { width: 7px; height: 7px; border-radius: 50%; background: var(--rouge); animation: clignote 1.4s ease-in-out infinite; }
   .dock { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 20;
     width: min(640px, calc(100% - 32px)); display: flex; flex-direction: column; border-radius: 22px; overflow: hidden;
     background: var(--verre-fort); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%);
@@ -998,6 +1003,7 @@
       </div>
       <p id="liste-vide" class="vide" hidden>Aucun compte rendu pour l'instant.<br>Lance un enregistrement ou dépose un audio dans le dossier d'import.</p>
     </div>
+    <button id="retour-seance" class="retour-seance" type="button" hidden><span class="point-rouge" aria-hidden="true"></span>Appel en cours · revenir aux notes</button>
     <article id="seance" class="seance" hidden aria-label="Appel en cours">
       <div class="seance-page">
         <input id="seance-titre" class="seance-titre" type="text" maxlength="200" placeholder="Nouvel appel" aria-label="Titre de l'appel" autocomplete="off">
@@ -1697,13 +1703,21 @@
     clearTimeout(minuteurNotes); minuteurNotes = setTimeout(envoyerNotes, 800);
   }));
 
+  // Séance visible, ou compte rendu ouvert pendant l'appel (bouton « Revenir à l'appel »)
+  function montrerSeance(visible) {
+    visible = visible && seanceActive;
+    $("#seance").hidden = !visible;
+    $("#lecteur").hidden = visible;
+    $("#retour-seance").hidden = !seanceActive || visible;
+  }
+  $("#retour-seance").addEventListener("click", () => montrerSeance(true));
   function afficherSeance(actif) {
     if (actif === seanceActive) return;
     seanceActive = actif;
-    $("#seance").hidden = !actif;
-    $("#lecteur").hidden = actif;
+    montrerSeance(actif);
     if (actif) {
-      $("#seance-titre").value = ""; $("#seance-notes").value = ""; ajusterNotes();
+      const n = (etat && etat.notes) || {};   // fenêtre rouverte pendant l'appel : on retrouve ce qui était tapé
+      $("#seance-titre").value = n.titre || ""; $("#seance-notes").value = n.notes || ""; ajusterNotes();
       const d = new Date();
       $("#seance-date").textContent = "Aujourd'hui · " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
       ouvrirTranscription(direct.ouvert);
@@ -1728,7 +1742,7 @@
     catch (_) { message("Copie impossible."); }
   });
   $("#dock-langue").addEventListener("change", (ev) =>
-    api("/api/reglages", { langue: ev.target.value }).then(() => message("Langue changée : prise en compte dès la phrase suivante."))
+    api("/api/reglages", { langue: ev.target.value }).then(() => message("Langue changée dès la phrase suivante, et gardée pour les prochains appels."))
       .catch((e) => message(e.message)));
   $("#dock-stop").addEventListener("click", () => $("#rec").click());
 
@@ -1875,7 +1889,7 @@
     if (!b) return;
     const c = comptesRendus[+b.dataset.i];
     if (!modeSelection && (ev.metaKey || ev.shiftKey)) { basculerModeSelection(true); }
-    if (!modeSelection) return ouvrirCompteRendu(c);
+    if (!modeSelection) { montrerSeance(false); return ouvrirCompteRendu(c); }   // pendant un appel : on peut relire un compte rendu
     const visibles = filtrer();
     if (ev.shiftKey && dernierCoche) {
       const a = visibles.findIndex((x) => cleCR(x) === dernierCoche), z = visibles.indexOf(c);
