@@ -36,6 +36,28 @@ def gpu_disponible():
         return False
 
 
+# Sans carte NVIDIA, Whisper tourne sur le processeur : Turbo et Pro y sont nettement plus lents
+DETAILS_PROCESSEUR = {
+    "Systran/faster-whisper-small": "Recommandé sur ce PC (pas de carte NVIDIA) : rapide sur le processeur. "
+                                    "Moins fiable sur les noms propres et les chiffres.",
+    "mobiuslabsgmbh/faster-whisper-large-v3-turbo": "Précis, mais lent sur ce PC sans carte NVIDIA : "
+                                                    "le compte rendu arrive nettement plus tard.",
+    "Systran/faster-whisper-large-v3": "Le plus précis, mais très lent sur ce PC sans carte NVIDIA.",
+}
+
+
+def modele_recommande():
+    """Turbo avec une carte NVIDIA, sinon le modèle léger (le processeur ne suit pas Turbo en direct)."""
+    return MODELE_RECOMMANDE if gpu_disponible() else MODELES[0]["id"]
+
+
+def modeles():
+    """Liste des modèles affichée dans l'app, avec des détails adaptés quand il n'y a pas de carte NVIDIA."""
+    if gpu_disponible():
+        return MODELES
+    return [dict(m, detail=DETAILS_PROCESSEUR.get(m["id"], m["detail"])) for m in MODELES]
+
+
 def _charger(dossier, gpu):
     from faster_whisper import WhisperModel   # import tardif : lourd à charger
     cle = (str(dossier), gpu)

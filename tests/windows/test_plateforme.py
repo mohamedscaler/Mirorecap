@@ -110,15 +110,35 @@ def _faux_pyaudiowpatch():
     module = types.ModuleType("pyaudiowpatch")
     module.paWASAPI, module.paInt16, module.paContinue = 13, 8, 0
 
+    # Comme la vraie bibliothèque : chaque sortie WASAPI a une entrée « [Loopback] » à part
+    peripheriques = [
+        {"index": 0, "name": "Haut-parleurs", "maxOutputChannels": 2, "maxInputChannels": 0,
+         "defaultSampleRate": 48000.0},
+        {"index": 1, "name": "Casque", "maxOutputChannels": 2, "maxInputChannels": 0,
+         "defaultSampleRate": 44100.0},
+        {"index": 2, "name": "Haut-parleurs [Loopback]", "isLoopbackDevice": True, "maxOutputChannels": 0,
+         "maxInputChannels": 2, "defaultSampleRate": 48000.0},
+        {"index": 3, "name": "Casque [Loopback]", "isLoopbackDevice": True, "maxOutputChannels": 0,
+         "maxInputChannels": 2, "defaultSampleRate": 44100.0},
+    ]
+
     class PyAudio:
+        ouverts = []   # périphériques ouverts, pour vérifier la sortie captée
+
         def get_host_api_info_by_type(self, _):
-            return {"defaultOutputDevice": 3}
+            return {"index": 0, "deviceCount": len(peripheriques), "defaultOutputDevice": 0}
+
+        def get_device_info_by_host_api_device_index(self, _api, i):
+            return peripheriques[i]
 
         def get_device_info_by_index(self, i):
-            return {"index": i, "name": "Haut-parleurs [Loopback]", "isLoopbackDevice": True,
-                    "defaultSampleRate": 48000.0, "maxInputChannels": 2}
+            return peripheriques[i]
 
-        def open(self, rate, channels, stream_callback, **_):
+        def get_loopback_device_info_generator(self):
+            return (d for d in peripheriques if d.get("isLoopbackDevice"))
+
+        def open(self, rate, channels, stream_callback, input_device_index=None, **_):
+            PyAudio.ouverts.append(input_device_index)
             return _FluxSimule(stream_callback, rate, channels)
 
         def terminate(self):
@@ -126,6 +146,21 @@ def _faux_pyaudiowpatch():
 
     module.PyAudio = PyAudio
     return module
+
+
+def test_sortie_choisie_captee(tmp_path, monkeypatch):
+    """La liste ne montre que les vraies sorties, et la capture suit la sortie choisie
+    (sinon celle par défaut, ou celle par défaut si la choisie est débranchée)."""
+    faux = _faux_pyaudiowpatch()
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", faux)
+    from plateforme import audio_windows as a
+    assert a.liste_sorties() == (["Haut-parleurs", "Casque"], "Haut-parleurs")
+    for nom, attendu in (("Casque", 3), ("", 2), ("Débranché", 2)):
+        capture = a.lancer_capture(tmp_path / f"{attendu}-{nom or 'defaut'}.wav", nom)
+        time.sleep(0.2)
+        capture.terminate()
+        assert capture.wait(timeout=5) == 0
+        assert faux.PyAudio.ouverts[-1] == attendu, (nom, faux.PyAudio.ouverts)
 
 
 def test_capture_comble_les_silences(tmp_path, monkeypatch):

@@ -15,6 +15,16 @@ MODELE_RECOMMANDE = "mlx-community/whisper-large-v3-turbo"
 MODELE_PRO = "mlx-community/whisper-large-v3-mlx"
 
 
+def modele_recommande():
+    """Modèle proposé par défaut (au premier lancement)."""
+    return MODELE_RECOMMANDE
+
+
+def modeles():
+    """Liste des modèles affichée dans l'app."""
+    return MODELES
+
+
 def modele_complet(dossier):
     """Le modèle téléchargé contient-il tout ce qu'il faut ?"""
     return (dossier / "config.json").exists() and any(dossier.glob("weights.*"))

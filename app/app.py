@@ -74,7 +74,7 @@ CONFIG_DEFAUT = {
     "cle_api_anthropic": "",
     # Vide = iCloud Drive/Comptes-rendus si iCloud Drive est actif, sinon ~/Comptes-rendus
     "dossier_sortie": "",
-    "modele_whisper": MODELE_RECOMMANDE,
+    "modele_whisper": plateforme.whisper.modele_recommande(),   # Windows sans carte NVIDIA : le modèle léger
     "modele_choisi": False,   # le modèle Whisper est choisi au premier lancement
     # Durée de conservation des audios rangés, en jours (0 = toujours). Les comptes rendus restent.
     "conservation_audio": 0,
@@ -3121,7 +3121,8 @@ def lire_reglages():
         "cle_definie": bool(cle),
         "cle_apercu": f"{cle[:7]}…{cle[-4:]}" if len(cle) > 12 else "",
         "modele_whisper": CONFIG["modele_whisper"],
-        "modeles": MODELES_WHISPER,
+        "modeles": plateforme.whisper.modeles(),
+        "modele_recommande": plateforme.whisper.modele_recommande(),
         "dossier_actuel": str(DOSSIER_SORTIE),
         "dossier_personnalise": CONFIG.get("dossier_sortie", ""),
         "erreurs": compter_erreurs(),
