@@ -3938,10 +3938,10 @@ class App:
     def liberer_whisper(self):
         """Vide la mémoire prise par Whisper quand plus rien ne l'attend (ni appel en cours, ni fichier
         en file) : sinon le modèle reste chargé (plusieurs Go) tant que l'app est ouverte."""
-        if self.enreg.actif or not self.file_traitement.empty():
-            return
         try:
-            with VERROU_WHISPER:
+            with VERROU_WHISPER:   # test refait sous le verrou : un appel peut démarrer juste avant
+                if self.enreg.actif or not self.file_traitement.empty():
+                    return
                 plateforme.whisper.liberer()
         except Exception as e:
             print(f"Libération de Whisper : {e}", flush=True)
@@ -3951,6 +3951,7 @@ class App:
             tache = self.file_traitement.get()
             if isinstance(tache, dict):          # amélioration d'un compte rendu existant
                 self.traiter_amelioration(tache)
+                self.liberer_whisper()   # un traitement audio a pu sauter la libération à cause d'elle
                 continue
             chemin, date = tache
             transcription, pistes, temporaires = None, None, []
