@@ -1,0 +1,58 @@
+# Construit MiroRecap pour Windows (Python autonome + Inno Setup), l'installe sur le runner,
+# vérifie qu'elle démarre et transcrit, puis joint MiroRecap-Setup.exe à la release.
+name: Windows
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [windows]   # pendant le portage : chaque push sur la branche est testé
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version = numéro du tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: Set-Content app/VERSION ($env:GITHUB_REF_NAME -replace '^v', '')
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Construire l'app et l'installateur
+        run: ./build/windows/construire.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MiroRecap-windows
+          path: dist/windows/MiroRecap-Setup.exe
+
+      - name: Installer (en silencieux, comme une mise à jour)
+        run: |
+          # Pas de -Wait : il attendrait aussi MiroRecap, que l'installateur relance à la fin
+          $p = Start-Process dist\windows\MiroRecap-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=installation.log' -PassThru
+          $p.WaitForExit()
+          Get-Content installation.log -Tail 30
+          if ($p.ExitCode -ne 0) { throw "Installateur : code $($p.ExitCode)" }
+
+      - name: Tester l'app installée
+        run: ./build/windows/tester.ps1
+
+      - name: Journal de l'app
+        if: always()
+        run: Get-Content "$env:LOCALAPPDATA\MiroRecap\app.log" -ErrorAction SilentlyContinue
+
+      - name: Publier dans la release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/windows/MiroRecap-Setup.exe

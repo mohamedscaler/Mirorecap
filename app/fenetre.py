@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Fenêtre de MiroRecap : affiche l'interface servie par app.py (URL passée en argument).
-Les réglages propres au système (Cocoa sur Mac) sont dans plateforme/fenetre_<système>.py."""
+Les réglages propres au système (Cocoa sur Mac, WebView2 sur Windows) sont dans plateforme/fenetre_<système>.py."""
 
 import sys
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # plateforme/ à côté, même si Python ne l'ajoute pas
 
 url = sys.argv[1]
 JETON = sys.argv[2] if len(sys.argv) > 2 else ""   # pour parler à l'API de l'app
