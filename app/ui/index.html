@@ -2907,7 +2907,7 @@
   async function ouvrirAccueil() {
     accueilOuvert = true;
     const r = await api("/api/reglages");
-    const recommande = "mlx-community/whisper-large-v3-turbo";
+    const recommande = r.modele_recommande;   // Turbo, ou le modèle léger sur un PC sans carte NVIDIA
     choixModele = r.modele_choisi ? r.modele_whisper : recommande;
     $("#fm-choix").innerHTML = r.modeles.map((m) => `
       <div class="rang cliquable" role="radio" tabindex="0" data-choix="${esc(m.id)}" aria-checked="${m.id === choixModele}">
