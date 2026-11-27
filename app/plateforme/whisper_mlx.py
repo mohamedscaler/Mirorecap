@@ -50,6 +50,17 @@ def transcrire(audio, modele, langue, consigne, suivi, mots=False):
     return resultat.get("segments", [])
 
 
+def precharger(modele):
+    """Charge le modèle à l'avance, avec la même clé que transcrire (dossier + float16) : la première
+    transcription le trouve déjà prêt."""
+    import mlx.core as mx
+    import mlx_whisper  # noqa: F401  (charge mlx_whisper.transcribe)
+    model = sys.modules["mlx_whisper.transcribe"].ModelHolder.get_model(modele, mx.float16)
+    # Tableaux internes (masque du décodeur, positions de l'encodeur) encore non calculés : MLX les lie
+    # au fil qui les a créés, et un autre fil ne pourrait pas s'en servir. On les calcule ici.
+    mx.eval([v for m in model.modules() for v in m.values() if isinstance(v, mx.array)])
+
+
 def liberer():
     """Retire le modèle de la mémoire. mlx_whisper le garde sinon jusqu'à la fermeture de l'app
     (1,5 à 3 Go, plus la réserve de mémoire graphique de MLX). Le prochain appel le recharge."""

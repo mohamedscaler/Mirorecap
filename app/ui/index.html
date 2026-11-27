@@ -1968,6 +1968,7 @@
     return `<div class="${classe}"><span class="heure">${tete}</span>${esc(texte)}${provisoire ? '<span class="points" aria-hidden="true"><i></i><i></i><i></i></span>' : ""}</div>`;
   }
   async function sonderDirect() {
+    if (document.hidden) return;
     let d;
     try { d = await api("/api/direct"); } catch (_) { return; }
     if (!etat || !etat.enregistrement) return;
@@ -1990,9 +1991,11 @@
   }
 
   async function sonder() {
+    if (document.hidden) return;   // fenêtre réduite ou cachée : rien à afficher
     try { rendreEtat(await api("/api/etat")); } catch (_) { /* l'app redémarre peut-être */ }
   }
   setInterval(sonder, 1000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) sonder(); });   // à jour dès le retour
 
   $("#rec").addEventListener("click", async () => {
     const bouton = $("#rec");
@@ -2600,6 +2603,7 @@
     }
   }
   async function sonderNiveaux() {
+    if (document.hidden) return;
     try { majNiveaux(await api("/api/niveaux")); } catch (_) {}
   }
   function suivreNiveaux(actif) {
