@@ -1408,6 +1408,8 @@
     [/Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran et audio système → active MiroRecap, puis relance l'app/g,
       "vérifie qu'un haut-parleur ou un casque est actif (Paramètres → Système → Son), puis relance l'enregistrement"],
     [/Refusé par macOS/g, "Impossible à capter"],
+    [/Non autorisé par macOS/g, "Impossible à capter"],
+    [/non autorisé par macOS/g, "impossible à capter"],
     [/Corbeille du Mac/g, "Corbeille"],
     [/le Finder/g, "l'Explorateur"],
     [/vide = iCloud Drive/g, "vide = Documents"],
@@ -1417,7 +1419,7 @@
     [/dans le Terminal/g, "dans la fenêtre de commandes"],
     [/\bMac\b/g, "PC"],
   ];
-  const aAdapter = /Mac|Finder|Terminal|iCloud/;
+  const aAdapter = /Mac|macOS|Finder|Terminal|iCloud/;
   const texteWindows = (t) => TEXTES_WINDOWS.reduce((s, [motif, rempl]) => s.replace(motif, rempl), t);
   function adapterWindows(noeud) {
     if (noeud.nodeType === Node.TEXT_NODE) {
@@ -1431,7 +1433,10 @@
     const elements = [noeud, ...noeud.querySelectorAll("[placeholder], [title], [aria-label]")];
     for (const el of elements) for (const attr of ["placeholder", "title", "aria-label"]) {
       const v = el.getAttribute(attr);
-      if (v && aAdapter.test(v)) el.setAttribute(attr, texteWindows(v));
+      if (v && aAdapter.test(v)) {
+        const t = texteWindows(v);
+        if (t !== v) el.setAttribute(attr, t);
+      }
     }
     const marcheur = document.createTreeWalker(noeud, NodeFilter.SHOW_TEXT);
     for (let n = marcheur.nextNode(); n; n = marcheur.nextNode()) adapterWindows(n);
@@ -1442,9 +1447,14 @@
     new MutationObserver((changements) => {
       for (const c of changements) {
         if (c.type === "characterData") adapterWindows(c.target);
-        else c.addedNodes.forEach(adapterWindows);
+        else if (c.type === "attributes") {   // infobulles posées en JS (barre de l'appel…)
+          const v = c.target.getAttribute(c.attributeName);
+          const t = v && aAdapter.test(v) ? texteWindows(v) : v;
+          if (t !== v) c.target.setAttribute(c.attributeName, t);   // sans changement : pas de boucle (« MacBook »)
+        } else c.addedNodes.forEach(adapterWindows);
       }
-    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    }).observe(document.body, { childList: true, subtree: true, characterData: true,
+                                attributes: true, attributeFilter: ["title", "placeholder", "aria-label"] });
   }
 
   // ============ Utilitaires ============

@@ -349,6 +349,7 @@ class Enregistreur:
         self._trames = 0                 # échantillons reçus du micro : position exacte dans l'enregistrement
         self._generation = 0             # flux micro qui écrit (les autres sont ignorés pendant un changement)
         self._generation_attendue = 0    # dernier flux micro ouvert : il prend le relais à son premier bloc
+        self._trou = None                # (génération, instant) : nouveau micro pas encore là quand l'ancien s'est arrêté
         self.micro_nom = ""              # micro réellement utilisé
         self.direct = None               # TranscripteurDirect de l'enregistrement en cours (ou du dernier)
 
@@ -408,6 +409,18 @@ class Enregistreur:
                     if generation != self._generation_attendue:
                         return   # ancien micro, remplacé
                     self._generation = generation   # premier bloc du nouveau micro : il prend le relais
+                trou = self._trou
+                if trou and trou[0] == generation:
+                    # Le nouveau micro a mis plus de 1,5 s à démarrer : ce temps devient du silence,
+                    # sinon la piste micro serait plus courte que l'appel (et décalée par rapport à l'autre)
+                    self._trou = None
+                    manque = int((time_monotonic() - trou[1]) * self.frequence) - len(indata)
+                    if manque > 0:
+                        silence = np.zeros((manque,) + indata.shape[1:], dtype=indata.dtype)
+                        file_attente.put(silence)
+                        self._trames += manque
+                        if direct:
+                            direct.ajouter_micro(silence)
                 file_attente.put(indata.copy())
                 self._trames += len(indata)
                 if direct:
@@ -419,10 +432,18 @@ class Enregistreur:
                     self.dernier_pic_sature = time_monotonic()
             return callback
 
+        with self._verrou:   # un réglage envoyé pendant le démarrage attend que micro et capture soient prêts
+            self._demarrer(rappel_pour, arret, ecrire, direct, peripherique, frequence)
+        if not CONFIG.get("son_systeme", True):
+            notifier(f"Son du {ORDI} coupé", "Seul ton micro est enregistré (choix gardé d'un appel précédent ou des Réglages). "
+                     "Réactive-le avec le haut-parleur de la barre de l'appel.")
+
+    def _demarrer(self, rappel_pour, arret, ecrire, direct, peripherique, frequence):
         self._rappel_pour = rappel_pour
         self._arret = arret
         self.frequence, self._trames = frequence, 0
         self._generation = self._generation_attendue = 1
+        self._trou = None
         self._segments = []
         self.actif = True
         self.debut = dt.datetime.now()
@@ -487,7 +508,9 @@ class Enregistreur:
             limite = time.time() + 1.5
             while self._generation != generation and time.time() < limite:
                 time.sleep(0.02)
-            self._generation = generation
+            if self._generation != generation:
+                self._generation = generation   # l'ancien se tait ; le trou sera comblé au premier bloc du nouveau
+                self._trou = (generation, time_monotonic())
             for etape in (ancien.stop, ancien.close):
                 try:
                     etape()
@@ -597,6 +620,7 @@ class Enregistreur:
                 assembler_segments(presents, piste)
             except Exception as e:
                 print(f"Assemblage du son de l'ordinateur impossible, micro seul : {e}", flush=True)
+                piste.unlink(missing_ok=True)
                 return None
             finally:
                 for _, f in presents:
