@@ -1778,7 +1778,7 @@
 
   // ============ Séance : page de notes + transcription en direct pendant l'appel ============
   const direct = { minuteur: null, cle: null, texte: "", ouvert: false };
-  let seanceActive = false, minuteurNotes = null;
+  let seanceActive = false, seanceDebut = null, minuteurNotes = null;
   try { direct.ouvert = localStorage.getItem("direct-ouvert") === "1"; } catch (_) {}
 
   function notesSeance() { return { titre: $("#seance-titre").value, notes: $("#seance-notes").value }; }
@@ -1803,8 +1803,16 @@
   }
   $("#retour-seance").addEventListener("click", () => montrerSeance(true));
   function afficherSeance(actif) {
+    const debut = actif && etat ? etat.appel_debut : null;
+    if (actif && seanceActive && debut && seanceDebut && debut !== seanceDebut) {
+      // Appel arrêté puis un autre lancé pendant que la fenêtre était cachée : sans ça, les notes du
+      // premier resteraient affichées et partiraient dans le compte rendu du second
+      clearTimeout(minuteurNotes);
+      seanceActive = false;
+    }
     if (actif === seanceActive) return;
     seanceActive = actif;
+    seanceDebut = debut;
     montrerSeance(actif);
     if (actif) {
       const n = (etat && etat.notes) || {};   // fenêtre rouverte pendant l'appel : on retrouve ce qui était tapé
@@ -1968,6 +1976,7 @@
     return `<div class="${classe}"><span class="heure">${tete}</span>${esc(texte)}${provisoire ? '<span class="points" aria-hidden="true"><i></i><i></i><i></i></span>' : ""}</div>`;
   }
   async function sonderDirect() {
+    if (document.hidden) return;
     let d;
     try { d = await api("/api/direct"); } catch (_) { return; }
     if (!etat || !etat.enregistrement) return;
@@ -1990,9 +1999,11 @@
   }
 
   async function sonder() {
+    if (document.hidden) return;   // fenêtre réduite ou cachée : rien à afficher
     try { rendreEtat(await api("/api/etat")); } catch (_) { /* l'app redémarre peut-être */ }
   }
   setInterval(sonder, 1000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) sonder(); });   // à jour dès le retour
 
   $("#rec").addEventListener("click", async () => {
     const bouton = $("#rec");
@@ -2600,6 +2611,7 @@
     }
   }
   async function sonderNiveaux() {
+    if (document.hidden) return;
     try { majNiveaux(await api("/api/niveaux")); } catch (_) {}
   }
   function suivreNiveaux(actif) {

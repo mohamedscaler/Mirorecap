@@ -124,6 +124,11 @@ def transcrire(audio, modele, langue, consigne, suivi, mots=False):
         return _transcrire_avec(_charger(modele, False), audio, langue, consigne, suivi, mots)
 
 
+def precharger(modele):
+    """Charge le modèle à l'avance : la première transcription le trouve déjà prêt."""
+    _charger(modele, gpu_disponible())
+
+
 def liberer():
     """Retire le modèle de la mémoire. Le prochain appel le recharge."""
     with _VERROU:

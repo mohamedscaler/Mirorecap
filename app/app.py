@@ -863,6 +863,8 @@ class DetecteurAppels:
         if self.propose or time.time() - self.depuis < 6:
             return
         self.propose = True
+        if not self.app.occupee():
+            self.app.precharger_whisper()   # prêt si l'utilisateur lance l'enregistrement
         nom = app_de_visio()
         self.appel = {"app": nom or "", "debut": dt.datetime.now().isoformat(timespec="seconds")}
         if mode == "auto":
@@ -3411,6 +3413,8 @@ class App:
         self.enreg = Enregistreur()
         self.verrou = threading.Lock()   # l'enregistrement se pilote depuis le menu ET la fenêtre
         self.file_traitement = queue.Queue()
+        self._minuteur_whisper = None    # libération de Whisper programmée (voir liberer_whisper)
+        self._verrou_minuteur = threading.Lock()
         self.en_file = set()             # fichiers déjà en file (évite les doublons)
         self.tailles = {}                # taille des fichiers d'import au dernier scan
         self.icloud_demandes = set()     # fichiers iCloud dont on a déjà demandé le téléchargement
@@ -3501,6 +3505,7 @@ class App:
             "enregistrement": self.enreg.actif,
             "duree": duree,
             "notes": self.notes_en_cours if self.enreg.actif else None,
+            "appel_debut": self.enreg.debut.isoformat(timespec="seconds") if self.enreg.actif else None,
             "statut": self.statut,
             "en_attente": self.file_traitement.qsize(),
             "erreurs": compter_erreurs(),
@@ -3797,6 +3802,8 @@ class App:
         try:
             if not self.enreg.actif:
                 self.enreg.demarrer()
+                if self.enreg.direct:   # direct désactivé : Whisper ne servira qu'à la fin
+                    self.precharger_whisper(self.enreg.direct.dossier_modele)
             else:
                 chemin, debut, finaliser = self.enreg.arreter()
                 self.finalisations[chemin] = finaliser
@@ -3960,16 +3967,50 @@ class App:
         self.file_traitement.put({"projet": projet, "fichier": fichier, "mode": mode})
         return {"ok": True, "en_attente": self.file_traitement.qsize()}
 
+    DELAI_LIBERATION = 300   # s : un appel ou un fichier qui suit de près retrouve Whisper déjà chargé
+
     def liberer_whisper(self):
-        """Vide la mémoire prise par Whisper quand plus rien ne l'attend (ni appel en cours, ni fichier
-        en file) : sinon le modèle reste chargé (plusieurs Go) tant que l'app est ouverte."""
+        """Programme la libération de Whisper dans DELAI_LIBERATION s (chaque appel repousse l'échéance) :
+        sinon le modèle reste chargé (plusieurs Go) tant que l'app est ouverte."""
+        with self._verrou_minuteur:
+            if self._minuteur_whisper is not None:
+                self._minuteur_whisper.cancel()
+            self._minuteur_whisper = threading.Timer(self.DELAI_LIBERATION, self._liberer_whisper_maintenant)
+            self._minuteur_whisper.daemon = True
+            self._minuteur_whisper.start()
+
+    def _liberer_whisper_maintenant(self):
+        """Vide la mémoire prise par Whisper si plus rien ne l'attend (ni appel en cours, ni traitement en
+        cours ou en file)."""
+        moi = threading.current_thread()
         try:
             with VERROU_WHISPER:   # test refait sous le verrou : un appel peut démarrer juste avant
-                if self.enreg.actif or not self.file_traitement.empty():
-                    return
+                with self._verrou_minuteur:
+                    if isinstance(moi, threading.Timer) and moi is not self._minuteur_whisper:
+                        return   # échéance remplacée pendant qu'on attendait le verrou (préchargement)
+                if self.enreg.actif or TRAITEMENT["etape"] or not self.file_traitement.empty():
+                    return   # TRAITEMENT : tâche déjà sortie de la file, transcrite morceau par morceau
                 plateforme.whisper.liberer()
         except Exception as e:
             print(f"Libération de Whisper : {e}", flush=True)
+
+    def precharger_whisper(self, dossier=None):
+        """Charge Whisper en fond quand un appel commence (ou est détecté) : la première phrase du texte
+        en direct n'attend pas le chargement. Libéré au bout de DELAI_LIBERATION s si rien ne s'en sert."""
+        dossier = dossier or dossier_modele_direct()
+        if not dossier:
+            return   # direct désactivé (Whisper ne servira qu'à la fin) ou modèle pas encore téléchargé
+
+        def charger():
+            self.liberer_whisper()   # avant le verrou : une échéance qui expire pendant le chargement est remplacée
+            try:
+                with VERROU_WHISPER:
+                    plateforme.whisper.precharger(dossier)
+            except Exception as e:
+                print(f"Préchargement de Whisper : {e}", flush=True)
+            self.liberer_whisper()
+
+        threading.Thread(target=charger, daemon=True).start()
 
     def travailleur(self):
         while True:
